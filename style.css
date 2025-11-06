@@ -1,0 +1,22 @@
+body {
+  font-family: sans-serif;
+  text-align: center;
+  background: #f0f0f0;
+  padding: 20px;
+}
+
+#tapBtn, #lootboxBtn {
+  font-size: 24px;
+  padding: 20px;
+  margin: 10px;
+  cursor: pointer;
+}
+
+#coins {
+  font-size: 30px;
+  margin-top: 20px;
+}
+
+#leaderboard {
+  margin-top: 30px;
+}
