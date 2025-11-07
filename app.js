@@ -1,10 +1,11 @@
-/* app.js — Mobile-optimized Plinko (Telegram Mini App)
+/* app.js — Mobile-optimized Plinko (Telegram Mini App) with Avatar + Username Leaderboard
    - Peg rows: 3..14 (12 rows total)
    - Bins (12): [500,100,50,20,5,1,1,5,20,50,100,500]
    - Square prize boxes, ≥2px gaps, 1px gradient stroke, 500-bin glow
    - Strong Solana ball glow (purple→teal)
    - Physics + center bias + 1/1000 acceptance for 500 edge bins
    - Sounds on peg hit / land; confetti on 500
+   - Leaderboard shows avatar (photo_url or initials), name, @username, score
 */
 
 /* =================== CONFIG =================== */
@@ -20,8 +21,8 @@ const maxBalls = 100;
 const regenSeconds = 60;
 
 // physics shaping
-const centerBias = 6.4;       // pull toward center (reduces edge hits)
-const EDGE_ACCEPT_PROB = 0.001; // 1/1000 acceptance for 500 edge bins
+const centerBias = 6.4;          // pull toward center (reduces edge hits)
+const EDGE_ACCEPT_PROB = 0.001;  // 1/1000 acceptance for 500 edge bins
 
 // peg rows (top → bottom)
 const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14];
@@ -45,6 +46,20 @@ const dom = {
   closeModalBtn: document.getElementById('closeModal')
 };
 
+/* ============== USER HELPER (TG) ============== */
+function getTelegramUser() {
+  const u = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) || null;
+  // Normalize fields with sensible fallbacks
+  return {
+    id: u?.id ? String(u.id) : 'local_' + Math.floor(Math.random() * 999999),
+    first_name: u?.first_name || 'Player',
+    last_name: u?.last_name || '',
+    username: u?.username || '',           // may be empty
+    photo_url: u?.photo_url || ''          // often empty in Mini Apps (we handle fallback)
+  };
+}
+const tgUser = getTelegramUser();
+
 /* =================== STATE ==================== */
 let coins = Number(localStorage.getItem('sc_coins') || 0);
 let balls = Number(localStorage.getItem('sc_balls') || maxBalls);
@@ -56,10 +71,6 @@ let obstacles = [];     // {x,y,r}
 let bins = [];          // {x,y,w,h,i}
 let ballsInFlight = []; // {x,y,vx,vy,r,alive}
 let confettiParticles = [];
-
-let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user)
-  ? TELEGRAM.initDataUnsafe.user
-  : { id: 'local_' + Math.floor(Math.random()*99999), first_name: 'You' };
 
 /* =================== AUDIO ==================== */
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -105,8 +116,15 @@ function saveState(){
   localStorage.setItem('sc_lastRegen', String(lastRegen));
 }
 function saveScoreLocal(){
+  // Store name, username and avatar url so we can render a richer leaderboard
   const s = JSON.parse(localStorage.getItem('sc_scores') || '{}');
-  s[user.id] = { name: user.first_name || 'Player', coins };
+  const key = tgUser.id;
+  s[key] = {
+    name: tgUser.first_name || 'Player',
+    username: tgUser.username || '',
+    avatarUrl: tgUser.photo_url || '',
+    coins
+  };
   localStorage.setItem('sc_scores', JSON.stringify(s));
 }
 function updateUI(){
@@ -336,6 +354,128 @@ function drawConfetti(now){
   else setTimeout(()=> { const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
 }
 
+/* ========== LEADERBOARD RENDERING ============ */
+// Helpers for avatar initials
+function getInitials(name) {
+  const parts = (name || '').trim().split(/\s+/);
+  const a = (parts[0] || '').charAt(0);
+  const b = (parts[1] || '').charAt(0);
+  return (a + b).toUpperCase() || 'P';
+}
+
+function renderLeaderboard(){
+  const obj = JSON.parse(localStorage.getItem('sc_scores') || '{}');
+  const arr = Object.keys(obj).map(k => ({
+    id: k,
+    name: obj[k].name || 'Player',
+    username: obj[k].username || '',
+    avatarUrl: obj[k].avatarUrl || '',
+    coins: obj[k].coins || 0
+  }));
+  arr.sort((a,b) => b.coins - a.coins);
+
+  dom.leaderboardList.innerHTML = '';
+  if (!arr.length) {
+    dom.leaderboardList.innerHTML = '<div class="muted">No scores yet — be the first!</div>';
+    return;
+  }
+
+  // Build rows with avatar + name + @username + score
+  arr.slice(0, 20).forEach((p, i) => {
+    const row = document.createElement('div');
+    row.style.display = 'flex';
+    row.style.alignItems = 'center';
+    row.style.justifyContent = 'space-between';
+    row.style.gap = '10px';
+    row.style.padding = '8px 10px';
+    row.style.borderRadius = '10px';
+    row.style.background = 'rgba(255,255,255,0.03)';
+    row.style.marginBottom = '6px';
+
+    // Left side: rank + avatar + name + username
+    const left = document.createElement('div');
+    left.style.display = 'flex';
+    left.style.alignItems = 'center';
+    left.style.gap = '10px';
+
+    const rank = document.createElement('div');
+    rank.textContent = String(i + 1);
+    rank.style.width = '28px';
+    rank.style.textAlign = 'center';
+    rank.style.fontWeight = '800';
+    rank.style.color = i === 0 ? '#14F195' : 'rgba(255,255,255,0.9)';
+
+    // Avatar container
+    const avatarWrap = document.createElement('div');
+    avatarWrap.style.width = '36px';
+    avatarWrap.style.height = '36px';
+    avatarWrap.style.borderRadius = '50%';
+    avatarWrap.style.overflow = 'hidden';
+    avatarWrap.style.display = 'flex';
+    avatarWrap.style.alignItems = 'center';
+    avatarWrap.style.justifyContent = 'center';
+    avatarWrap.style.background = 'linear-gradient(90deg,#9945FF,#0ABDE3)';
+
+    if (p.avatarUrl) {
+      const img = document.createElement('img');
+      img.src = p.avatarUrl;
+      img.alt = p.name;
+      img.width = 36; img.height = 36;
+      img.style.objectFit = 'cover';
+      img.referrerPolicy = 'no-referrer';
+      avatarWrap.appendChild(img);
+    } else {
+      const init = document.createElement('div');
+      init.textContent = getInitials(p.name);
+      init.style.fontWeight = '800';
+      init.style.fontSize = '14px';
+      init.style.color = '#000';
+      init.style.width = '100%';
+      init.style.height = '100%';
+      init.style.display = 'flex';
+      init.style.alignItems = 'center';
+      init.style.justifyContent = 'center';
+      init.style.background = '#fff';
+      avatarWrap.appendChild(init);
+    }
+
+    const nameBlock = document.createElement('div');
+    nameBlock.style.display = 'flex';
+    nameBlock.style.flexDirection = 'column';
+    nameBlock.style.lineHeight = '1.1';
+
+    const name = document.createElement('div');
+    name.textContent = p.name;
+    name.style.fontWeight = '700';
+    name.style.color = 'rgba(255,255,255,0.95)';
+
+    const uname = document.createElement('div');
+    if (p.username) {
+      uname.textContent = '@' + p.username;
+      uname.style.fontSize = '12px';
+      uname.style.color = 'rgba(255,255,255,0.55)';
+    }
+
+    nameBlock.appendChild(name);
+    if (p.username) nameBlock.appendChild(uname);
+
+    left.appendChild(rank);
+    left.appendChild(avatarWrap);
+    left.appendChild(nameBlock);
+
+    // Right side: score
+    const score = document.createElement('div');
+    score.textContent = `${p.coins} SOLX`;
+    score.style.fontWeight = '800';
+    score.style.color = 'rgba(255,255,255,0.95)';
+
+    row.appendChild(left);
+    row.appendChild(score);
+
+    dom.leaderboardList.appendChild(row);
+  });
+}
+
 /* ================== PHYSICS =================== */
 let lastTime = null;
 function step(now){
@@ -490,41 +630,7 @@ function startRegen(){
 function showModal(html){ dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
 function hideModal(){ dom.modal.classList.add('hidden'); }
 
-function renderLeaderboard(){
-  const obj = JSON.parse(localStorage.getItem('sc_scores') || '{}');
-  const arr = Object.keys(obj).map(k => ({ id: k, name: obj[k].name, coins: obj[k].coins || 0 }));
-  arr.sort((a,b) => b.coins - a.coins);
-  dom.leaderboardList.innerHTML = '';
-  if (!arr.length) { dom.leaderboardList.innerHTML = '<div class="muted">No scores yet — be the first!</div>'; return; }
-  arr.slice(0,10).forEach((p,i) => {
-    const row = document.createElement('div');
-    row.className = 'row';
-    row.innerHTML = `<div class="meta"><div class="rank ${i===0?'first':''}">${i+1}</div><div><div style="font-weight:700">${p.name}</div><div style="font-size:12px;color:rgba(255,255,255,0.6)">Solana City</div></div></div><div style="font-weight:800">${p.coins} SOLX</div>`;
-    dom.leaderboardList.appendChild(row);
-  });
-}
-
-/* ================== EVENTS ==================== */
-document.getElementById('dropBtn').addEventListener('click', dropBall);
-document.getElementById('openLeaderboard')?.addEventListener('click', ()=> showScreen('leaderboard'));
-document.getElementById('backFromLeaderboard')?.addEventListener('click', ()=> showScreen('plinko'));
-document.getElementById('backFromLoot')?.addEventListener('click', ()=> showScreen('plinko'));
-document.getElementById('backFromRef')?.addEventListener('click', ()=> showScreen('plinko'));
-document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', ()=> showScreen(b.dataset.target)));
-document.querySelectorAll('.loot-open').forEach(b => b.addEventListener('click', e => {
-  const tier = e.currentTarget.dataset.tier;
-  const reward = tier === 'legend' ? (Math.floor(Math.random()*150)+50)
-                 : (tier==='rare' ? (Math.floor(Math.random()*50)+15)
-                 : (Math.floor(Math.random()*20)+5));
-  coins += reward; updateUI(); showModal(`<div style="font-size:18px;font-weight:800">🎉 You got ${reward} SOLX!</div>`);
-}));
-document.getElementById('copyRef')?.addEventListener('click', async ()=> {
-  const inp = document.getElementById('refLink');
-  try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
-  catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
-});
-dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
-
+// screen nav helper (if you have multiple screens)
 function showScreen(k){
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
   document.getElementById('screen-' + (k==='plinko' ? 'plinko' : k)).classList.add('active');
@@ -533,6 +639,29 @@ function showScreen(k){
   if (active) active.classList.add('active');
   if (k === 'leaderboard') renderLeaderboard();
 }
+
+/* ================== EVENTS ==================== */
+document.getElementById('dropBtn')?.addEventListener('click', dropBall);
+document.getElementById('openLeaderboard')?.addEventListener('click', ()=> showScreen('leaderboard'));
+document.getElementById('backFromLeaderboard')?.addEventListener('click', ()=> showScreen('plinko'));
+document.getElementById('backFromLoot')?.addEventListener('click', ()=> showScreen('plinko'));
+document.getElementById('backFromRef')?.addEventListener('click', ()=> showScreen('plinko'));
+
+document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', ()=> showScreen(b.dataset.target)));
+document.querySelectorAll('.loot-open').forEach(b => b.addEventListener('click', e => {
+  const tier = e.currentTarget.dataset.tier;
+  const reward = tier === 'legend' ? (Math.floor(Math.random()*150)+50)
+                 : (tier==='rare' ? (Math.floor(Math.random()*50)+15)
+                 : (Math.floor(Math.random()*20)+5));
+  coins += reward; updateUI(); showModal(`<div style="font-size:18px;font-weight:800">🎉 You got ${reward} SOLX!</div>`);
+}));
+
+document.getElementById('copyRef')?.addEventListener('click', async ()=> {
+  const inp = document.getElementById('refLink');
+  try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
+  catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
+});
+dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
 
 /* =================== INIT ===================== */
 let loopStarted = false;
