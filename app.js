@@ -1,6 +1,6 @@
-/* app.js — boxes more square, moved 15px lower, compact menu, +💥 Nuke booster (10x drops for 24h) */
+/* app.js — payouts updated; probability bias; Earn screen rendering; menu offset synced */
 
-const payouts = [500,100,50,20,5,1,1,5,20,50,100,500];
+const payouts = [100,50,20,10,5,1,1,5,10,20,50,100]; // updated prizes
 const binsCount = payouts.length;
 
 const BASE_MAX_BALLS = 100;
@@ -16,12 +16,15 @@ const BASE_REGEN_SECONDS = 60;
 const SPEEDSTER_MULTIPLIER = 0.5;
 
 const centerBias = 6.4;
-const EDGE_ACCEPT_PROB = 0.001;
+const EDGE_ACCEPT_PROB = 0.001; // still makes edge jackpots rare at physics stage
+
+// Target landing distribution (remaining mass favors 1/5/10)
+const TARGET_PROBS = { 100:0.005, 50:0.01, 20:0.10, 10:0.085, 5:0.20, 1:0.60 };
 
 const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14];
 
-const BIN_CORNER = 4;    // << more square
-const BINS_EXTRA_DROP = 15; // << move bins 15px lower
+const BIN_CORNER = 4;
+const BINS_EXTRA_DROP = 15;
 
 const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 if (TELEGRAM) { try { TELEGRAM.ready(); } catch(e) {} }
@@ -40,7 +43,10 @@ const dom = {
   modal: document.getElementById('modal'),
   modalContent: document.getElementById('modalContent'),
   closeModalBtn: document.getElementById('closeModal'),
-  boostList: document.getElementById('boostList')
+  boostList: document.getElementById('boostList'),
+  invitedCount: document.getElementById('invitedCount'),
+  earnFriendsList: document.getElementById('earnFriendsList'),
+  inviteTopList: document.getElementById('inviteTopList'),
 };
 
 function getTelegramUser(){
@@ -65,25 +71,25 @@ let bins = [];
 let ballsInFlight = [];
 let confettiParticles = [];
 
-/* ====== Boosts (with 💥 Nuke) ====== */
+/* ===== Boosts (Speedster, Maxi, Spender, Nuke) ===== */
 let boosts = JSON.parse(localStorage.getItem('sc_boosts') || '{}');
 if (!boosts || typeof boosts !== 'object') boosts = {};
 function isSpeedster(){ return (boosts.speedsterUntil || 0) > Date.now(); }
 function isMaxi(){ return (boosts.maxiUntil || 0) > Date.now(); }
-function isNuke(){ return (boosts.nukeUntil || 0) > Date.now(); }   // << NEW
+function isNuke(){ return (boosts.nukeUntil || 0) > Date.now(); }
 
 function regenSeconds(){ return isSpeedster() ? BASE_REGEN_SECONDS * SPEEDSTER_MULTIPLIER : BASE_REGEN_SECONDS; }
 function maxBalls(){ return isMaxi() ? BOOST_MAX_BALLS : BASE_MAX_BALLS; }
 function saveBoosts(){ localStorage.setItem('sc_boosts', JSON.stringify(boosts)); }
 
-/* ====== Audio ====== */
+/* ===== Audio ===== */
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
 function ensureAudio(){ if (!audioCtx) audioCtx = new AudioCtx(); }
 function playHitSound(){ try{ ensureAudio(); const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.type='square'; o.frequency.setValueAtTime(880+Math.random()*80,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.04,t+0.004); g.gain.exponentialRampToValueAtTime(0.0001,t+0.12); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+0.14);}catch(e){} }
 function playLandSound(big=false){ try{ ensureAudio(); const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.type='sine'; o.frequency.setValueAtTime(big?220:440,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(big?0.09:0.035,t+0.008); g.gain.exponentialRampToValueAtTime(0.0001,t+(big?0.7:0.22)); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+(big?0.72:0.24)); }catch(e){} }
 
-/* ====== Persistence/UI ====== */
+/* ===== State/UI ===== */
 function saveState(){
   localStorage.setItem('sc_coins', String(coins));
   localStorage.setItem('sc_balls', String(balls));
@@ -99,15 +105,16 @@ function updateUI(){
   if (dom.balance) dom.balance.textContent = `${coins} SOLX`;
   if (dom.ballsCount) dom.ballsCount.textContent = `${balls}`;
   if (dom.ballsMax) dom.ballsMax.textContent = `${maxBalls()}`;
+  renderEarn();
   saveState(); saveScoreLocal(); saveBoosts();
   renderBoosts();
 }
 
-/* ====== Sizing (no scroll) ====== */
+/* ===== Layout sizing ===== */
 function fitCanvas(){
-  const navH = 58;                 // compact nav
+  const navH = 58;
   const headerH = 56;
-  const appH = window.innerHeight - navH - 6 - 0; // menu lift and small buffer
+  const appH = window.innerHeight - navH - 11 - 0; // menu lifted + buffer
   const statsH = 72;
   const actionsH = 80;
   const canvasAvail = Math.max(260, appH - headerH - statsH - actionsH);
@@ -123,7 +130,7 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
-/* ====== Build pegs + (bigger, squarer, lower) bins ====== */
+/* ===== Build pegs + bins ===== */
 function buildObstaclesAndBins(){
   obstacles = [];
   bins = [];
@@ -155,17 +162,14 @@ function buildObstaclesAndBins(){
     lastPegY = y;
   }
 
-  // Previous base top for bins
   const baseBinsTop = H - bottomReserve + 10;
-  // Bring bins ~70% closer to last row, then move 15px lower
   const raisedTop = lastPegY + 0.3 * (baseBinsTop - lastPegY);
   const binsTop = raisedTop + BINS_EXTRA_DROP;
 
-  // Size: slightly bigger & squarer
   const minGap = 2;
   const maxFromHeight = Math.max(24, (H - binsTop) - 14);
   const maxFromWidth  = (availableWidth - minGap*(binsCount - 1)) / binsCount;
-  const vwTarget = Math.max(26, Math.min(42, Math.floor(window.innerWidth * 0.07))); // ~7vw
+  const vwTarget = Math.max(26, Math.min(42, Math.floor(window.innerWidth * 0.07)));
   const boxSize = Math.max(24, Math.min(vwTarget, maxFromWidth, maxFromHeight));
 
   const totalRowWidth = boxSize * binsCount + minGap * (binsCount - 1);
@@ -176,6 +180,7 @@ function buildObstaclesAndBins(){
   }
 }
 
+/* ===== Helpers ===== */
 function collidingCircleCircle(a,b){
   const dx = a.x - b.x, dy = a.y - b.y;
   const minR = (a.r + b.r);
@@ -197,7 +202,6 @@ function resolveCircleCollision(ball, obs){
   playHitSound();
 }
 
-/* ====== Render ====== */
 function drawRoundedRect(x,y,w,h,r){
   ctx.beginPath();
   const rr = Math.min(r, w/2, h/2);
@@ -209,6 +213,7 @@ function drawRoundedRect(x,y,w,h,r){
   ctx.closePath();
 }
 
+/* ===== Render ===== */
 function render(){
   const W = canvas.clientWidth, H = canvas.clientHeight;
   ctx.clearRect(0,0,W,H);
@@ -221,7 +226,7 @@ function render(){
     ctx.fill();
   }
 
-  // bins (more square corners)
+  // bins
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
 
@@ -229,7 +234,7 @@ function render(){
     gradStroke.addColorStop(0, '#9945FF');
     gradStroke.addColorStop(1, '#0ABDE3');
 
-    if (payouts[i] === 500){
+    if (payouts[i] === 100){
       ctx.save();
       ctx.shadowColor = 'rgba(153,69,255,0.28)';
       ctx.shadowBlur = 18;
@@ -274,7 +279,8 @@ function render(){
   }
 }
 
-/* ====== Confetti ====== */
+/* ===== Confetti ===== */
+let confettiParticles = [];
 function startConfetti(){
   const W = canvas.getBoundingClientRect().width;
   const count = 140;
@@ -321,7 +327,7 @@ function drawConfetti(now){
   else setTimeout(()=>{ const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
 }
 
-/* ====== Leaderboard ====== */
+/* ===== Leaderboard (coins) ===== */
 function getInitials(n){ const p=(n||'').trim().split(/\s+/); return ((p[0]||'').charAt(0)+(p[1]||'').charAt(0)).toUpperCase()||'P'; }
 function renderLeaderboard(){
   const list = document.getElementById('leaderboardList'); if (!list) return;
@@ -355,7 +361,59 @@ function renderLeaderboard(){
   });
 }
 
-/* ====== Physics loop ====== */
+/* ===== Earn (referrals UI only; storage placeholders) ===== */
+function renderEarn(){
+  if (!dom.invitedCount || !dom.earnFriendsList || !dom.inviteTopList) return;
+
+  const invited = JSON.parse(localStorage.getItem('sc_invited_friends') || '[]'); // [{name,username,photo_url}]
+  dom.invitedCount.textContent = invited.length;
+
+  // friends list
+  const list = dom.earnFriendsList;
+  list.innerHTML = '';
+  if (!invited.length){
+    list.innerHTML = '<div class="muted">No friends yet — share your link!</div>';
+  } else {
+    invited.forEach((f,idx)=>{
+      const row=document.createElement('div');
+      Object.assign(row.style,{display:'flex',alignItems:'center',gap:'10px',padding:'8px 10px',borderRadius:'12px',background:'rgba(255,255,255,0.04)'});
+      const av=document.createElement('div'); Object.assign(av.style,{width:'32px',height:'32px',borderRadius:'50%',overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(90deg,#9945FF,#0ABDE3)'});
+      if (f.photo_url){ const img=new Image(); img.src=f.photo_url; img.width=32; img.height=32; img.style.objectFit='cover'; img.referrerPolicy='no-referrer'; av.appendChild(img); }
+      else { const init=document.createElement('div'); init.textContent=(f.name||'F').charAt(0).toUpperCase(); Object.assign(init.style,{fontWeight:'800',fontSize:'12px',color:'#000',width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',background:'#fff'}); av.appendChild(init); }
+      const name=document.createElement('div'); name.textContent = f.username ? `${f.name||'Friend'} (@${f.username})` : (f.name||'Friend');
+      name.style.fontWeight='700';
+      row.appendChild(av); row.appendChild(name);
+      list.appendChild(row);
+    });
+  }
+
+  // global top by invites (placeholder local list)
+  const top = JSON.parse(localStorage.getItem('sc_invite_global') || '[]'); // [{name,username,invites,photo_url}]
+  const topList = dom.inviteTopList;
+  topList.innerHTML = '';
+  if (!top.length){
+    topList.innerHTML = '<div class="muted">No data yet.</div>';
+  } else {
+    top.sort((a,b)=>b.invites-a.invites);
+    top.slice(0,100).forEach((p,i)=>{
+      const row=document.createElement('div');
+      Object.assign(row.style,{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',padding:'8px 10px',borderRadius:'12px',background:'rgba(255,255,255,0.04)'});
+      const left=document.createElement('div'); Object.assign(left.style,{display:'flex',alignItems:'center',gap:'10px'});
+      const rank=document.createElement('div'); rank.textContent=String(i+1); Object.assign(rank.style,{width:'24px',textAlign:'center',fontWeight:'800',color:i===0?'#14F195':'rgba(255,255,255,0.9)'});
+      const av=document.createElement('div'); Object.assign(av.style,{width:'28px',height:'28px',borderRadius:'50%',overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(90deg,#9945FF,#0ABDE3)'});
+      if (p.photo_url){ const img=new Image(); img.src=p.photo_url; img.width=28; img.height=28; img.style.objectFit='cover'; img.referrerPolicy='no-referrer'; av.appendChild(img); }
+      else { const init=document.createElement('div'); init.textContent=(p.name||'U').charAt(0).toUpperCase(); Object.assign(init.style,{fontWeight:'800',fontSize:'12px',color:'#000',width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',background:'#fff'}); av.appendChild(init); }
+      const name=document.createElement('div'); name.textContent = p.username ? `${p.name||'User'} (@${p.username})` : (p.name||'User');
+      name.style.fontWeight='700';
+      const invites=document.createElement('div'); invites.textContent = `${p.invites} invited`; invites.style.fontWeight='800';
+      left.appendChild(rank); left.appendChild(av); left.appendChild(name);
+      row.appendChild(left); row.appendChild(invites);
+      topList.appendChild(row);
+    });
+  }
+}
+
+/* ===== Physics & loop ===== */
 let lastTime = null;
 function step(now){
   if (!lastTime) lastTime = now;
@@ -386,23 +444,31 @@ function step(now){
 
     const binsTop = bins.length ? bins[0].y : (H - 80);
     if (b.y + b.r >= binsTop){
+      // Physics-chosen bin index
       const firstLeft = bins[0].x;
       const lastRight = bins[bins.length-1].x + bins[bins.length-1].w;
       const span = lastRight - firstLeft;
       let relX = (b.x - firstLeft) / span; relX = Math.max(0, Math.min(0.9999, relX));
       let idx = Math.floor(relX * binsCount);
       idx = Math.max(0, Math.min(binsCount-1, idx));
-      let finalBin = idx;
 
-      if (payouts[idx] === 500){
-        if (Math.random() < EDGE_ACCEPT_PROB) finalBin = idx;
-        else { if (idx === 0) finalBin = 1; else if (idx === binsCount-1) finalBin = binsCount-2; }
+      // Remap to enforce target distribution while keeping x feel:
+      // Pick a payout by TARGET_PROBS, then snap to nearest bin with that payout
+      const chosenPayout = weightedPick(TARGET_PROBS);
+      const nearestIdx = nearestBinIndexForPayout(idx, chosenPayout);
+      let finalIdx = (nearestIdx != null) ? nearestIdx : idx;
+
+      // Keep edges ultra-rare if final is 100 (jackpot)
+      if (payouts[finalIdx] === 100 && Math.random() >= TARGET_PROBS[100]) {
+        // push inward one bin if random reject
+        if (finalIdx === 0) finalIdx = 1;
+        else if (finalIdx === binsCount-1) finalIdx = binsCount-2;
       }
 
-      const reward = payouts[finalBin] || 0;
+      const reward = payouts[finalIdx] || 0;
       coins += reward;
-      playLandSound(reward >= 100);
-      if (reward === 500) startConfetti();
+      playLandSound(reward >= 50);
+      if (reward === 100) startConfetti();
       spawnFloatingReward(b.x, binsTop - 18, `+${reward}`);
       ballsInFlight.splice(i,1);
       updateUI();
@@ -411,6 +477,30 @@ function step(now){
 
   render();
   requestAnimationFrame(step);
+}
+
+function weightedPick(map){
+  let total = 0, r = Math.random();
+  for (const k in map) total += map[k];
+  let acc = 0;
+  for (const k in map){
+    acc += map[k] / total;
+    if (r <= acc) return Number(k);
+  }
+  return Number(Object.keys(map).pop());
+}
+function nearestBinIndexForPayout(aroundIdx, payout){
+  // collect indices of bins with desired payout
+  const indices = [];
+  for (let i=0;i<payouts.length;i++) if (payouts[i] === payout) indices.push(i);
+  if (!indices.length) return null;
+  // pick the index from 'indices' nearest to aroundIdx
+  let best = indices[0], bestDist = Math.abs(indices[0]-aroundIdx);
+  for (let i=1;i<indices.length;i++){
+    const d = Math.abs(indices[i]-aroundIdx);
+    if (d < bestDist){ best = indices[i]; bestDist = d; }
+  }
+  return best;
 }
 
 function spawnFloatingReward(x,y,text){
@@ -430,18 +520,16 @@ function spawnFloatingReward(x,y,text){
   setTimeout(()=> el.remove(), 950);
 }
 
-/* ====== Gameplay (💥 Nuke aware) ====== */
+/* ===== Gameplay (Nuke aware) ===== */
 function dropBall(){
   if (balls <= 0){ showModal('<div style="font-weight:700">No balls left — wait for regen</div>'); return; }
-
   const W = canvas.clientWidth;
-  const drops = isNuke() ? 10 : 1;            // << when Nuke active
+  const drops = isNuke() ? 10 : 1;
   const canDrop = Math.min(drops, balls);
   balls -= canDrop;
   updateUI();
-
   for (let i=0;i<canDrop;i++){
-    const startX = W * 0.5 + (Math.random() - 0.5) * 24; // a bit wider spread for 10x
+    const startX = W * 0.5 + (Math.random() - 0.5) * 24;
     const startY = Math.max(18, canvas.clientHeight * 0.04);
     const initVx = (Math.random() - 0.5) * 40;
     const initVy = 40 + Math.random() * 40;
@@ -449,7 +537,7 @@ function dropBall(){
   }
 }
 
-/* ====== Boosts (render + buy) ====== */
+/* ===== Boosts ===== */
 function msToHMS(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60; return `${h}h ${m}m ${ss}s`; }
 
 function renderBoosts(){
@@ -459,7 +547,7 @@ function renderBoosts(){
     { key:'speedster', title:'⚡️ Speedster', desc:'Balls regenerate 2× faster for 24 hours.', cost:500, active:isSpeedster(), expiresAt:boosts.speedsterUntil||0, action: buySpeedster },
     { key:'maxi', title:'☄️ Maxi', desc:'Max balls increases to 500/500 for 24 hours.', cost:5000, active:isMaxi(), expiresAt:boosts.maxiUntil||0, action: buyMaxi },
     { key:'spender', title:'🪙 Spender', desc:'Purchase 100 ball drops instantly.', cost:2500, active:false, expiresAt:0, action: buySpender },
-    { key:'nuke', title:'💥 Nuke', desc:'Drop 10 balls per tap for 24 hours.', cost:500, active:isNuke(), expiresAt:boosts.nukeUntil||0, action: buyNuke } // << NEW
+    { key:'nuke', title:'💥 Nuke', desc:'Drop 10 balls per tap for 24 hours.', cost:500, active:isNuke(), expiresAt:boosts.nukeUntil||0, action: buyNuke }
   ];
   cards.forEach(card=>{
     const C = document.createElement('div');
@@ -481,9 +569,9 @@ function renderBoosts(){
 function buySpeedster(cost){ if (coins < cost) return; coins -= cost; boosts.speedsterUntil = Date.now() + 24*3600*1000; updateUI(); showModal('<div style="font-weight:800;font-size:16px">⚡️ Speedster activated for 24h!</div>'); }
 function buyMaxi(cost){ if (coins < cost) return; coins -= cost; boosts.maxiUntil = Date.now() + 24*3600*1000; if (balls > maxBalls()) balls = maxBalls(); updateUI(); showModal('<div style="font-weight:800;font-size:16px">☄️ Maxi activated: Max 500 for 24h!</div>'); }
 function buySpender(cost){ if (coins < cost) return; coins -= cost; balls = Math.min(maxBalls(), balls + 100); updateUI(); showModal('<div style="font-weight:800;font-size:16px">🪙 +100 balls added!</div>'); }
-function buyNuke(cost){ if (coins < cost) return; coins -= cost; boosts.nukeUntil = Date.now() + 24*3600*1000; updateUI(); showModal('<div style="font-weight:800;font-size:16px">💥 Nuke activated: 10 balls per tap for 24h!</div>'); } // << NEW
+function buyNuke(cost){ if (coins < cost) return; coins -= cost; boosts.nukeUntil = Date.now() + 24*3600*1000; updateUI(); showModal('<div style="font-weight:800;font-size:16px">💥 Nuke activated: 10 balls per tap for 24h!</div>'); }
 
-/* ====== Regen ====== */
+/* ===== Regen ===== */
 function startRegen(){
   if (balls > maxBalls()) balls = maxBalls();
   const now = Date.now();
@@ -510,7 +598,7 @@ function startRegen(){
   }, regenSeconds() * 1000);
 }
 
-/* ====== Modal & Nav ====== */
+/* ===== Modal & Nav ===== */
 function showModal(html){ if (!dom.modal) return; dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
 function hideModal(){ dom.modal?.classList.add('hidden'); }
 
@@ -523,9 +611,10 @@ function showScreen(k){
 
   if (k==='leaderboard') renderLeaderboard();
   if (k==='boost') renderBoosts();
+  if (k==='earn') renderEarn();
 }
 
-/* ====== Theme / Buttons ====== */
+/* ===== Theme / Buttons ===== */
 function initTheme(){
   Object.assign(document.body.style,{
     background:'radial-gradient(1200px 700px at 80% -10%, rgba(20,241,149,0.12), rgba(0,0,0,0)),radial-gradient(900px 500px at 0% 120%, rgba(153,69,255,0.14), rgba(0,0,0,0)),linear-gradient(180deg, #0b0b12 0%, #05060a 100%)',
@@ -547,7 +636,7 @@ function stylePrimary(btn){
   btn.style.textShadow='0 0 2px #000, 0 0 2px #000';
 }
 
-/* ====== Events & Init ====== */
+/* ===== Events & Init ===== */
 document.getElementById('dropBtn')?.addEventListener('click', dropBall);
 document.getElementById('copyRef')?.addEventListener('click', async ()=>{
   const inp=document.getElementById('refLink');
@@ -566,6 +655,7 @@ function init(){
   updateUI();
   renderLeaderboard();
   renderBoosts();
+  renderEarn();
   startRegen();
   if (!loopStarted){ loopStarted = true; requestAnimationFrame(step); }
 }
