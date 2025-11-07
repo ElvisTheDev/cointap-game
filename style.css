@@ -9,6 +9,7 @@
   --card: rgba(255,255,255,0.04);
 }
 
+/* base */
 *{box-sizing:border-box}
 html,body,#app{height:100%;margin:0;padding:0}
 body{
@@ -17,60 +18,64 @@ body{
   color:#fff;
   -webkit-font-smoothing:antialiased;
   -moz-osx-font-smoothing:grayscale;
+  -webkit-text-size-adjust:100%;
 }
 
 /* header */
-.header{
-  padding:14px 16px 10px;
-  display:flex;
-  align-items:center;
-  justify-content:space-between;
-}
+.header{padding:12px 14px 8px;display:flex;align-items:center;justify-content:space-between}
 .sub{font-size:12px;color:var(--muted);letter-spacing:0.08em}
-.title{margin:4px 0 0;font-size:20px}
+.title{margin:4px 0 0;font-size:18px}
 
 /* balance pill */
-.balance{
-  padding:8px 12px;border-radius:999px;background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000;font-weight:700;font-size:14px;
-}
+.balance{padding:8px 12px;border-radius:999px;background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000;font-weight:700;font-size:13px}
 
 /* main area */
-.main{padding:8px 16px 80px;min-height:calc(100vh - 160px);position:relative}
+.main{padding:8px 12px 90px;min-height:calc(100vh - 170px);position:relative}
 .screen{display:none}
 .screen.active{display:block}
 
-/* coin area */
-.coin-area{display:flex;flex-direction:column;align-items:center;justify-content:center;margin-top:20px}
-.coin-btn{
-  width:170px;height:170px;border-radius:50%;border:none;outline:none;
+/* top info */
+.top-info{display:flex;justify-content:space-between;align-items:center;padding:6px 0}
+.balls-info{font-weight:700}
+.regen-info{font-size:13px;color:var(--muted)}
+
+/* board area */
+.board-area{display:flex;flex-direction:column;align-items:center;gap:12px;margin-top:6px}
+.plinko-board{width:92%;max-width:520px;height:320px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border-radius:12px;position:relative;overflow:hidden;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5)}
+/* we will create peg rows dynamically; bins area at bottom */
+.plinko-bins{position:absolute;left:0;right:0;bottom:8px;height:48px;display:flex;justify-content:space-between;align-items:flex-end;padding:0 16px}
+.plinko-bin{width:calc((100% - 32px) / 10 - 8px);background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border-radius:6px;height:40px;display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--muted);font-size:13px}
+.plinko-peg{width:8px;height:8px;border-radius:50%;background:rgba(255,255,255,0.15);position:absolute;transform:translate(-50%,-50%)}
+
+/* drop area (coin button) */
+.drop-area{text-align:center;margin-top:6px}
+.coin-btn{width:120px;height:120px;border-radius:50%;border:none;outline:none;
   background:linear-gradient(180deg,var(--sol-green),var(--sol-cyan) 45%,var(--sol-purple));
   box-shadow:0 20px 40px rgba(0,0,0,0.45), 0 0 40px rgba(153,69,255,0.14) inset;
-  display:flex;align-items:center;justify-content:center;font-size:40px;cursor:pointer;
-  transform:translateZ(0);
-}
+  display:flex;align-items:center;justify-content:center;font-size:36px;cursor:pointer}
 .coin-btn:active{transform:scale(0.98)}
-.coins-count{margin-top:12px;font-weight:700;font-size:20px;color:white;text-shadow:0 6px 20px rgba(0,0,0,0.5)}
+.coins-count{margin-top:8px;font-weight:700;font-size:18px;color:white}
 
 /* controls */
-.controls{display:flex;gap:10px;margin-top:18px;justify-content:center}
+.controls{display:flex;gap:10px;margin-top:12px;justify-content:center}
 .btn{padding:10px 14px;border-radius:12px;border:none;cursor:pointer;font-weight:700}
 .btn.loot{background:linear-gradient(90deg,var(--sol-cyan),var(--sol-purple));color:#000}
 .btn.dark{background:var(--card);color:#fff}
 .btn:hover{filter:brightness(1.04)}
 
 /* placeholder chad */
-.chad-placeholder{margin-top:20px;text-align:center;padding:12px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);color:var(--muted)}
+.chad-placeholder{margin-top:12px;text-align:center;padding:10px;border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);color:var(--muted)}
 
-/* panels */
+/* panels / leaderboard rows */
 .panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent); padding:14px;border-radius:12px}
 .leaderboard-list{margin-top:10px}
-.leaderboard-list .row{display:flex;align-items:center;justify-content:space-between;padding:10px 8px;border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02)}
+.leaderboard-list .row{display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02)}
 .leaderboard-list .row .meta{display:flex;gap:10px;align-items:center}
-.leaderboard-list .row .rank{width:36px;height:36px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-weight:800}
-.leaderboard-list .row .rank.first{background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000}
+.rank{width:36px;height:36px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-weight:800}
+.rank.first{background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000}
 
 /* loot grid */
-.loot-grid{display:grid;grid-template-columns:repeat(1,1fr);gap:10px;margin-top:12px}
+.loot-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:12px}
 @media(min-width:720px){.loot-grid{grid-template-columns:repeat(3,1fr)}}
 .loot-card{padding:12px;border-radius:12px;background:rgba(255,255,255,0.02);text-align:center}
 .loot-tier{font-weight:800}
@@ -82,10 +87,7 @@ body{
 .ref-box button{padding:10px 12px;border-radius:10px;background:linear-gradient(90deg,var(--sol-purple),var(--sol-cyan));color:#000}
 
 /* bottom nav */
-.bottom-nav{
-  position:fixed;left:8px;right:8px;bottom:14px;padding:8px 10px;border-radius:16px;background:linear-gradient(180deg,rgba(0,0,0,0.5),rgba(0,0,0,0.65));
-  display:flex;gap:6px;align-items:center;justify-content:space-between;z-index:50
-}
+.bottom-nav{position:fixed;left:8px;right:8px;bottom:14px;padding:8px 10px;border-radius:16px;background:linear-gradient(180deg,rgba(0,0,0,0.5),rgba(0,0,0,0.65));display:flex;gap:6px;align-items:center;justify-content:space-between;z-index:50}
 .nav-btn{flex:1;padding:8px;border-radius:12px;background:transparent;border:none;color:#c7d2e6;display:flex;flex-direction:column;align-items:center;gap:4px;font-weight:700}
 .nav-btn.active{background:linear-gradient(90deg,var(--sol-purple),var(--sol-cyan));color:#000}
 
