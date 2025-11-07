@@ -8,8 +8,6 @@
   --muted: rgba(255,255,255,0.6);
   --card: rgba(255,255,255,0.04);
 }
-
-/* base */
 *{box-sizing:border-box}
 html,body,#app{height:100%;margin:0;padding:0}
 body{
@@ -17,19 +15,13 @@ body{
   background: radial-gradient(circle at 10% 10%, rgba(153,69,255,0.06), transparent 6%), linear-gradient(180deg,#05060a 0%, #071227 60%);
   color:#fff;
   -webkit-font-smoothing:antialiased;
-  -moz-osx-font-smoothing:grayscale;
-  -webkit-text-size-adjust:100%;
 }
 
 /* header */
 .header{padding:12px 14px 8px;display:flex;align-items:center;justify-content:space-between}
 .sub{font-size:12px;color:var(--muted);letter-spacing:0.08em}
 .title{margin:4px 0 0;font-size:18px}
-
-/* balance pill */
 .balance{padding:8px 12px;border-radius:999px;background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000;font-weight:700;font-size:13px}
-
-/* main area */
 .main{padding:8px 12px 90px;min-height:calc(100vh - 170px);position:relative}
 .screen{display:none}
 .screen.active{display:block}
@@ -39,17 +31,12 @@ body{
 .balls-info{font-weight:700}
 .regen-info{font-size:13px;color:var(--muted)}
 
-/* board area */
+/* board area - canvas */
 .board-area{display:flex;flex-direction:column;align-items:center;gap:12px;margin-top:6px}
-.plinko-board{width:92%;max-width:520px;height:360px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border-radius:12px;position:relative;overflow:hidden;padding:16px;box-shadow:0 8px 30px rgba(0,0,0,0.5)}
-/* pegs and bins */
-.plinko-bins{position:absolute;left:0;right:0;bottom:8px;height:56px;display:flex;justify-content:space-between;align-items:flex-end;padding:0 8px}
-.plinko-bin{flex:1;margin:0 4px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);border-radius:6px;height:48px;display:flex;align-items:center;justify-content:center;font-weight:800;color:var(--muted);font-size:13px}
-.plinko-peg{width:9px;height:9px;border-radius:50%;background:rgba(255,255,255,0.15);position:absolute;transform:translate(-50%,-50%)}
+.plinko-canvas{width:92%;max-width:720px;height:auto;border-radius:12px;background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent);box-shadow:0 8px 30px rgba(0,0,0,0.5);display:block}
 
-/* drop area */
+/* drop area rectangular button */
 .drop-area{text-align:center;margin-top:6px;display:flex;flex-direction:column;align-items:center;gap:8px}
-/* rectangular Drop button */
 .drop-btn{
   min-width:150px;padding:14px 20px;border-radius:14px;border:none;outline:none;
   background:linear-gradient(180deg,var(--sol-green),var(--sol-cyan) 45%,var(--sol-purple));
@@ -60,17 +47,13 @@ body{
 .drop-btn:active{transform:translateY(2px) scale(.995)}
 .coins-count{margin-top:4px;font-weight:700;font-size:16px;color:white}
 
-/* controls */
+/* controls and panels (same as before) */
 .controls{display:flex;gap:10px;margin-top:12px;justify-content:center}
 .btn{padding:10px 14px;border-radius:12px;border:none;cursor:pointer;font-weight:700}
 .btn.loot{background:linear-gradient(90deg,var(--sol-cyan),var(--sol-purple));color:#000}
 .btn.dark{background:var(--card);color:#fff}
 .btn:hover{filter:brightness(1.04)}
-
-/* placeholder chad */
 .chad-placeholder{margin-top:12px;text-align:center;padding:10px;border-radius:10px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);color:var(--muted)}
-
-/* panels / leaderboard rows */
 .panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent); padding:14px;border-radius:12px}
 .leaderboard-list{margin-top:10px}
 .leaderboard-list .row{display:flex;align-items:center;justify-content:space-between;padding:8px;border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02)}
@@ -78,29 +61,12 @@ body{
 .rank{width:36px;height:36px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-weight:800}
 .rank.first{background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000}
 
-/* loot grid */
-.loot-grid{display:grid;grid-template-columns:1fr;gap:10px;margin-top:12px}
-@media(min-width:720px){.loot-grid{grid-template-columns:repeat(3,1fr)}}
-.loot-card{padding:12px;border-radius:12px;background:rgba(255,255,255,0.02);text-align:center}
-.loot-tier{font-weight:800}
-.loot-emoji{font-size:32px;margin-top:6px}
-
-/* referrals */
-.ref-box{display:flex;gap:8px;margin-top:12px}
-.ref-box input{flex:1;padding:10px;border-radius:10px;border:none;background:rgba(255,255,255,0.03);color:#fff}
-.ref-box button{padding:10px 12px;border-radius:10px;background:linear-gradient(90deg,var(--sol-purple),var(--sol-cyan));color:#000}
-
-/* bottom nav */
-.bottom-nav{position:fixed;left:8px;right:8px;bottom:14px;padding:8px 10px;border-radius:16px;background:linear-gradient(180deg,rgba(0,0,0,0.5),rgba(0,0,0,0.65));display:flex;gap:6px;align-items:center;justify-content:space-between;z-index:50}
-.nav-btn{flex:1;padding:8px;border-radius:12px;background:transparent;border:none;color:#c7d2e6;display:flex;flex-direction:column;align-items:center;gap:4px;font-weight:700}
-.nav-btn.active{background:linear-gradient(90deg,var(--sol-purple),var(--sol-cyan));color:#000}
-
 /* modal */
 .modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:60}
 .modal.hidden{display:none}
 .modal-card{background:#071227;padding:18px;border-radius:12px;width:88%;max-width:420px;border:1px solid rgba(255,255,255,0.04)}
 .modal-actions{margin-top:14px;text-align:right}
-
-/* small helpers */
-.muted{color:var(--muted)}
-.panel-actions{margin-top:10px;text-align:center}
+.muted{color:rgba(255,255,255,0.6)}
+.bottom-nav{position:fixed;left:8px;right:8px;bottom:14px;padding:8px 10px;border-radius:16px;background:linear-gradient(180deg,rgba(0,0,0,0.5),rgba(0,0,0,0.65));display:flex;gap:6px;align-items:center;justify-content:space-between;z-index:50}
+.nav-btn{flex:1;padding:8px;border-radius:12px;background:transparent;border:none;color:#c7d2e6;display:flex;flex-direction:column;align-items:center;gap:4px;font-weight:700}
+.nav-btn.active{background:linear-gradient(90deg,var(--sol-purple),var(--sol-cyan));color:#000}
