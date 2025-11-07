@@ -38,7 +38,7 @@
       touch-action:manipulation;
     }
     .app{
-      height: calc(100vh - var(--nav-h) - var(--safe-bottom) - 6px);
+      height: calc(100vh - var(--nav-h) - var(--safe-bottom) - 11px); /* +5px higher menu */
       max-width:980px; margin:0 auto; padding:10px 12px;
       display:flex; flex-direction:column; gap:8px; overflow:hidden;
     }
@@ -49,12 +49,12 @@
     .screens{ flex:1 1 auto; min-height:0; display:grid; }
     .screen{
       display:none; grid-template-rows:auto 1fr auto; min-height:0;
-      overflow:hidden; /* default: no scroll per screen */
+      overflow:hidden; /* per-screen no-scroll default */
     }
     .screen.active{ display:grid; }
 
-    /* Make only the Boost screen scrollable */
-    #screen-boost{
+    /* Make only the Boost and Earn screens scrollable */
+    #screen-boost, #screen-earn{
       overflow:auto;
       -webkit-overflow-scrolling: touch;
     }
@@ -88,12 +88,12 @@
     .balanceValue{ font-size:16px; font-weight:800; color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
 
     .pad{ padding:4px 0; }
-    #leaderboardList, #boostList, #socialList{ display:flex; flex-direction:column; gap:8px; }
+    #leaderboardList, #boostList, #socialList, #earnFriendsList, #inviteTopList{ display:flex; flex-direction:column; gap:8px; }
     .muted{ color:var(--fg-dim); }
 
-    /* One-piece bottom menu bar */
+    /* One-piece bottom menu bar (moved up by 5px) */
     .bottomNav{
-      position:fixed; left:8px; right:8px; bottom:calc(6px + var(--safe-bottom));
+      position:fixed; left:8px; right:8px; bottom:calc(11px + var(--safe-bottom));
       height:var(--nav-h);
       background:rgba(5,6,10,0.78); backdrop-filter:blur(6px);
       border:1px solid rgba(255,255,255,0.10); border-radius:14px;
@@ -170,7 +170,7 @@
         </div>
       </div>
 
-      <!-- ===== BOOST ===== -->
+      <!-- ===== BOOST (scrollable) ===== -->
       <div id="screen-boost" class="screen">
         <h3 style="margin:6px 0 4px; font-weight:800;">Get Your Boosters 🚀</h3>
         <div id="boostList" class="pad"></div>
@@ -201,13 +201,34 @@
         </div>
       </div>
 
-      <!-- ===== INVITE ===== -->
-      <div id="screen-ref" class="screen">
-        <h3 style="margin:6px 0 4px; font-weight:800;">Invite Friends</h3>
-        <p class="muted" style="margin:0 0 6px;">Share your link to earn rewards.</p>
-        <div class="statCard" style="gap:10px; width:100%;">
-          <input id="refLink" value="https://t.me/your_bot?start=ref_12345" style="flex:1; background:transparent; border:0; color:#fff; outline:none;">
-          <button id="copyRef" class="primary" style="min-width:100px;">Copy</button>
+      <!-- ===== EARN (scrollable) ===== -->
+      <div id="screen-earn" class="screen">
+        <h3 style="margin:6px 0 10px; font-weight:800;">Earn 💰</h3>
+
+        <div class="statCard" style="flex-direction:column; align-items:flex-start; gap:8px;">
+          <div style="font-weight:800;">🎁 Rewards</div>
+          <div class="muted">🎁 Both you and your friend will receive 🪙 200 coins and ⚪ 100 ball drops.</div>
+          <div style="display:flex; gap:8px; width:100%; align-items:center;">
+            <input id="refLink" value="https://t.me/your_bot?start=ref_12345" style="flex:1; background:transparent; border:0; color:#fff; outline:none;">
+            <button id="copyRef" class="primary" style="min-width:100px;">Copy</button>
+          </div>
+        </div>
+
+        <div class="statCard" style="flex-direction:column; gap:8px;">
+          <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+            <div style="font-weight:800;">Friends invited</div>
+            <div id="invitedCount" style="font-weight:800;">0</div>
+          </div>
+          <div id="earnFriendsList" class="pad">
+            <div class="muted">No friends yet — share your link!</div>
+          </div>
+        </div>
+
+        <div class="statCard" style="flex-direction:column; gap:8px;">
+          <div style="font-weight:800;">Top 100 by Invites</div>
+          <div id="inviteTopList" class="pad">
+            <div class="muted">No data yet.</div>
+          </div>
         </div>
       </div>
     </section>
@@ -219,7 +240,7 @@
     <button class="nav-btn" data-target="boost">🚀 Boost</button>
     <button class="nav-btn" data-target="leaderboard">🏆 Top100</button>
     <button class="nav-btn" data-target="social">🌐 Social</button>
-    <button class="nav-btn" data-target="ref">💰 Invite</button>
+    <button class="nav-btn" data-target="earn">💰 Earn</button>
   </nav>
 
   <!-- Modal -->
