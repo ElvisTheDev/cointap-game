@@ -1,46 +1,49 @@
-/* app.js - Centered pyramid peg placement (same rows/counts preserved)
-   - Rows: [3,4,5,6,7,8,9,10,11,12]
-   - Ball r = 4px, Peg r = 6px
-   - Physics: gravity, restitution, friction, circle collisions
-   - Pixel-friendly, responsive, and centered in the mini app
-*/
+/* app.js - Updated: smaller pegs, 500-coin end bins, center bias for center-heavy distribution,
+   Solana glow on balls, WebAudio sounds for collisions/land, confetti on 500-coin hit.
+   Keep index.html and style.css as before (canvas id = plinkoCanvas, etc.) */
 
-/* CONFIG */
-const payouts = [100,50,20,5,1,1,5,20,50,100];
+////////////////////
+// CONFIG
+////////////////////
+const payouts = [500,100,50,20,5,1,1,5,20,50,100,500]; // 12 bins
 const binsCount = payouts.length;
-const ballRadius = 4;        // px
-const obstacleRadius = 6;    // px
-const gravity = 1200;        // px/s^2
+
+const ballRadius = 4;            // px (unchanged)
+const obstacleRadius = Math.max(2, Math.round(6 * 0.7)); // 6 previously, reduced by another 30% => 4.2 -> round 4
+// (set to 4)
+const gravity = 1200;           // px/s^2
 const restitution = 0.72;
 const friction = 0.995;
 const maxBalls = 100;
 const regenSeconds = 60;
 
-/* Peg counts per row (top -> bottom). Keeps same totals as before. */
-const obstacleRows = [3,4,5,6,7,8,9,10,11,12]; // 10 rows
+// physics bias to encourage center landings (tuneable)
+const centerBias = 6.4; // acceleration strength (px/s^2 per px from center). Increase = stronger central pull.
 
-/* TELEGRAM init (safe no-op outside Telegram) */
+////////////////////
+// DOM & TELEGRAM
+////////////////////
 const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 if (TELEGRAM) { try { TELEGRAM.ready(); } catch(e) {} }
 
-/* DOM */
 const canvas = document.getElementById('plinkoCanvas');
 const ctx = canvas.getContext('2d');
+
 const dom = {
   ballsCount: document.getElementById('ballsCount'),
   regenTimer: document.getElementById('regenTimer'),
   dropBtn: document.getElementById('dropBtn'),
   coinsCount: document.getElementById('coinsCount'),
   balance: document.getElementById('balance'),
-  openLoot: document.getElementById('openLoot'),
-  openLeaderboard: document.getElementById('openLeaderboard'),
   leaderboardList: document.getElementById('leaderboardList'),
   modal: document.getElementById('modal'),
   modalContent: document.getElementById('modalContent'),
   closeModalBtn: document.getElementById('closeModal')
 };
 
-/* state */
+////////////////////
+// STATE
+////////////////////
 let coins = Number(localStorage.getItem('sc_coins') || 0);
 let balls = Number(localStorage.getItem('sc_balls') || maxBalls);
 if (isNaN(balls)) balls = maxBalls;
@@ -50,9 +53,53 @@ let regenInterval = null, regenCountdownInterval = null;
 let obstacles = [];   // {x,y,r}
 let bins = [];        // {x,y,w,h,i}
 let ballsInFlight = []; // {x,y,vx,vy,r,alive}
+
+let confettiParticles = []; // for confetti overlay particles
+
 let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) ? TELEGRAM.initDataUnsafe.user : { id: 'local_'+Math.floor(Math.random()*99999), first_name: 'You' };
 
-/* Persistence helpers */
+////////////////////
+// AUDIO (WebAudio simple tones)
+////////////////////
+const AudioCtx = window.AudioContext || window.webkitAudioContext;
+let audioCtx = null;
+function ensureAudio() {
+  if (!audioCtx) audioCtx = new AudioCtx();
+}
+function playHitSound() {
+  try {
+    ensureAudio();
+    const t = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'square';
+    o.frequency.setValueAtTime(880, t); // high feedback
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(0.05, t + 0.005);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t); o.stop(t + 0.16);
+  } catch(e) { /* ignore */ }
+}
+function playLandSound(isBig=false) {
+  try {
+    ensureAudio();
+    const t = audioCtx.currentTime;
+    const o = audioCtx.createOscillator();
+    const g = audioCtx.createGain();
+    o.type = 'sine';
+    o.frequency.setValueAtTime(isBig ? 220 : 440, t);
+    g.gain.setValueAtTime(0.0001, t);
+    g.gain.exponentialRampToValueAtTime(isBig ? 0.09 : 0.04, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + (isBig ? 0.7 : 0.22));
+    o.connect(g); g.connect(audioCtx.destination);
+    o.start(t); o.stop(t + (isBig ? 0.72 : 0.24));
+  } catch(e) {}
+}
+
+////////////////////
+// STORAGE helpers
+////////////////////
 function saveState(){
   localStorage.setItem('sc_coins', String(coins));
   localStorage.setItem('sc_balls', String(balls));
@@ -63,8 +110,6 @@ function saveScoreLocal(){
   s[user.id] = { name: user.first_name || 'Player', coins };
   localStorage.setItem('sc_scores', JSON.stringify(s));
 }
-
-/* UI update */
 function updateUI(){
   dom.coinsCount.textContent = `${coins} SOLX`;
   dom.balance.textContent = `${coins} SOLX`;
@@ -73,7 +118,9 @@ function updateUI(){
   saveScoreLocal();
 }
 
-/* Canvas sizing (high-DPI aware) */
+////////////////////
+// CANVAS setup & pyramid builder (centered)
+////////////////////
 function fitCanvas(){
   const cssWidth = Math.min(window.innerWidth * 0.92, 940);
   const cssHeight = Math.max(420, window.innerHeight * 0.56);
@@ -85,12 +132,8 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
-/* Build a centered pyramid:
-   - Uses obstacleRows counts
-   - Calculates horizontal spacing based on the widest row (bottom)
-   - Centers each row horizontally
-   - Even vertical spacing between rows
-*/
+const obstacleRows = [3,4,5,6,7,8,9,10,11,12]; // 10 rows retained
+
 function buildObstaclesAndBins(){
   obstacles = [];
   bins = [];
@@ -99,39 +142,32 @@ function buildObstaclesAndBins(){
   const H = canvas.clientHeight;
 
   const topPadding = Math.max(18, H * 0.04);
-  const bottomReserve = Math.max(84, H * 0.18);
+  const bottomReserve = Math.max(100, H * 0.18);
   const usableH = H - topPadding - bottomReserve;
 
-  // widest row (bottom) determines horizontal spacing
+  // widest row count
   const widestCount = Math.max(...obstacleRows);
-  // leave side margins so pegs aren't at the very edges
   const sideMargin = Math.max(0.06 * W, 24);
-  // available width for pegs
   const availableWidth = W - sideMargin * 2;
-  // horizontal spacing between peg centers for the bottom row
-  const baseSpacing = availableWidth / (widestCount + 1); // +1 to create margin on both sides
-
-  // vertical spacing evenly across rows
+  const baseSpacing = availableWidth / (widestCount + 1);
   const rowsCount = obstacleRows.length;
-  const vSpacing = usableH / (rowsCount + 1); // +1 to leave top breathing room
+  const vSpacing = usableH / (rowsCount + 1);
 
   for (let r = 0; r < rowsCount; r++){
     const count = obstacleRows[r];
-    // spacing for this row: keep same baseSpacing but center row so it's narrower near top
+    // center row with same spacing
     const rowWidth = baseSpacing * (count + 1);
     const rowLeft = (W - rowWidth) / 2;
     const y = topPadding + (r + 1) * vSpacing;
-
     for (let i = 0; i < count; i++){
       const x = rowLeft + (i + 1) * baseSpacing;
       obstacles.push({ x, y, r: obstacleRadius });
     }
   }
 
-  // bins: center under pyramid, spanning same availableWidth as pegs
-  const binsY = H - bottomReserve + 12;
+  // bins: center under pyramid spanning availableWidth
+  const binsY = canvas.clientHeight - bottomReserve + 12;
   const binWidth = availableWidth / binsCount;
-  // left-most bin x coordinate (match pyramid centering)
   const binsLeft = (W - availableWidth) / 2;
   for (let i = 0; i < binsCount; i++){
     const x = binsLeft + i * binWidth;
@@ -139,7 +175,9 @@ function buildObstaclesAndBins(){
   }
 }
 
-/* Collision helpers */
+////////////////////
+// COLLISION helpers (circle-vs-circle)
+////////////////////
 function collidingCircleCircle(a, b){
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -147,7 +185,9 @@ function collidingCircleCircle(a, b){
   const minR = (a.r + b.r);
   return dist2 < (minR * minR);
 }
+
 function resolveCircleCollision(ball, obs){
+  // normal
   let nx = ball.x - obs.x;
   let ny = ball.y - obs.y;
   const dist = Math.hypot(nx, ny) || 0.0001;
@@ -160,20 +200,163 @@ function resolveCircleCollision(ball, obs){
   ball.vy = ball.vy - 2 * vdotn * ny;
   ball.vx *= restitution;
   ball.vy *= restitution;
-  ball.vx += (Math.random() - 0.5) * 12;
+  // small randomness to break symmetry
+  ball.vx += (Math.random() - 0.5) * 10;
+  // sound on hit
+  playHitSound();
 }
 
-/* Physics loop */
+////////////////////
+// RENDER helpers (ball glow + scene)
+////////////////////
+function render(){
+  const W = canvas.clientWidth;
+  const H = canvas.clientHeight;
+  ctx.clearRect(0,0,W,H);
+
+  // pegs (soft)
+  for (let o of obstacles){
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.arc(o.x, o.y, o.r, 0, Math.PI*2);
+    ctx.fill();
+  }
+
+  // bins
+  for (let i = 0; i < bins.length; i++){
+    const b = bins[i];
+    ctx.fillStyle = 'rgba(255,255,255,0.03)';
+    ctx.fillRect(b.x, b.y, b.w, b.h);
+    ctx.fillStyle = 'rgba(255,255,255,0.78)';
+    ctx.font = '700 13px Inter, system-ui';
+    ctx.textAlign = 'center';
+    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 6);
+  }
+
+  // separators
+  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
+  ctx.lineWidth = 1;
+  ctx.beginPath();
+  for (let i = 1; i < bins.length; i++){
+    const bx = bins[0].x + i * (bins[0].w + 6);
+    ctx.moveTo(bx, bins[0].y);
+    ctx.lineTo(bx, H);
+  }
+  ctx.stroke();
+
+  // balls with Solana glow (radial gradient purple -> teal)
+  for (let b of ballsInFlight){
+    // draw glow
+    const grad = ctx.createRadialGradient(b.x, b.y, b.r * 0.2, b.x, b.y, b.r * 6);
+    grad.addColorStop(0, 'rgba(153,69,255,0.95)'); // purple start
+    grad.addColorStop(0.35, 'rgba(153,69,255,0.5)');
+    grad.addColorStop(0.6, 'rgba(10,189,227,0.3)'); // teal
+    grad.addColorStop(1, 'rgba(10,189,227,0)');
+    ctx.beginPath();
+    ctx.fillStyle = grad;
+    ctx.arc(b.x, b.y, b.r * 6, 0, Math.PI*2);
+    ctx.fill();
+
+    // shadow
+    ctx.beginPath();
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.arc(b.x + 2.5, b.y + 3.5, b.r + 2.2, 0, Math.PI*2);
+    ctx.fill();
+
+    // ball core
+    ctx.beginPath();
+    ctx.fillStyle = '#ffffff';
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.fill();
+  }
+}
+
+////////////////////
+// CONFETTI effect (canvas overlay using many particles)
+////////////////////
+function startConfetti() {
+  // spawn many particles across the canvas area
+  const W = canvas.getBoundingClientRect().width;
+  const H = canvas.getBoundingClientRect().height;
+  const count = 120;
+  for (let i = 0; i < count; i++) {
+    const p = {
+      x: canvas.getBoundingClientRect().left + Math.random() * W,
+      y: canvas.getBoundingClientRect().top + Math.random() * 40,
+      vx: (Math.random() - 0.5) * 600,
+      vy: 200 + Math.random() * 300,
+      size: 6 + Math.random() * 8,
+      life: 1200 + Math.random() * 1200,
+      color: (Math.random() < 0.5) ? '#9945FF' : '#14F195',
+      born: performance.now()
+    };
+    confettiParticles.push(p);
+  }
+  // start DOM animation loop for confetti overlay
+  requestAnimationFrame(drawConfetti);
+}
+
+function drawConfetti(now){
+  // create overlay canvas if not exists
+  let overlay = document.getElementById('confettiOverlay');
+  if (!overlay) {
+    overlay = document.createElement('canvas');
+    overlay.id = 'confettiOverlay';
+    overlay.style.position = 'fixed';
+    overlay.style.left = '0';
+    overlay.style.top = '0';
+    overlay.style.pointerEvents = 'none';
+    overlay.style.zIndex = 9998;
+    document.body.appendChild(overlay);
+  }
+  const ratio = window.devicePixelRatio || 1;
+  overlay.width = window.innerWidth * ratio;
+  overlay.height = window.innerHeight * ratio;
+  overlay.style.width = window.innerWidth + 'px';
+  overlay.style.height = window.innerHeight + 'px';
+  const octx = overlay.getContext('2d');
+  octx.setTransform(ratio,0,0,ratio,0,0);
+  octx.clearRect(0,0,window.innerWidth,window.innerHeight);
+
+  const TTL = 2500;
+  confettiParticles = confettiParticles.filter(p => (now - p.born) < p.life);
+  for (let p of confettiParticles) {
+    p.x += p.vx * (1/60);
+    p.y += p.vy * (1/60);
+    p.vy += 800 * (1/60); // gravity on confetti
+    octx.fillStyle = p.color;
+    octx.fillRect(p.x, p.y, p.size, p.size * 0.6);
+  }
+  if (confettiParticles.length > 0) requestAnimationFrame(drawConfetti);
+  else {
+    // cleanup overlay after a short delay
+    setTimeout(()=> { const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
+  }
+}
+
+////////////////////
+// PHYSICS loop
+////////////////////
 let lastTime = null;
 function step(now){
   if (!lastTime) lastTime = now;
   const dt = Math.min(0.032, (now - lastTime) / 1000);
   lastTime = now;
 
+  const W = canvas.clientWidth;
+  const H = canvas.clientHeight;
+  const centerX = W * 0.5;
+
   for (let bi = ballsInFlight.length - 1; bi >= 0; bi--){
     const b = ballsInFlight[bi];
     if (!b.alive) { ballsInFlight.splice(bi,1); continue; }
 
+    // center bias acceleration toward center (makes edges rarer)
+    const dxCenter = (centerX - b.x);
+    const axCenter = dxCenter * centerBias * 0.001; // scale down: px * bias -> px/s^2
+    b.vx += axCenter * dt;
+
+    // integrate gravity and friction
     b.vy += gravity * dt;
     b.vx *= Math.pow(friction, dt*60);
     b.vy *= Math.pow(friction, dt*60);
@@ -181,8 +364,7 @@ function step(now){
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    // left/right wall collisions
-    const W = canvas.clientWidth;
+    // walls
     if (b.x - b.r < 4){
       b.x = 4 + b.r;
       b.vx = Math.abs(b.vx) * restitution;
@@ -200,12 +382,10 @@ function step(now){
       }
     }
 
-    // bottom detection -> bin
-    const H = canvas.clientHeight;
+    // bottom -> bin detection
     const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
     if (b.y + b.r >= bottomTrigger){
-      const W2 = canvas.clientWidth;
-      // map to bins with the same centered availableWidth
+      // map relative to binsLeft / availableWidth
       const binsLeft = bins[0] ? bins[0].x : 8;
       const availableWidth = (bins[bins.length-1].x + bins[bins.length-1].w) - binsLeft;
       let relX = (b.x - binsLeft) / availableWidth;
@@ -215,7 +395,15 @@ function step(now){
       const reward = payouts[binIndex] || 0;
       coins += reward;
 
-      // floating +X animation
+      // play land sound; bigger sound for big reward
+      playLandSound(reward >= 100 ? true : false);
+
+      // confetti & special on 500 bins
+      if (reward === 500) {
+        startConfetti();
+      }
+
+      // spawn floating reward
       spawnFloatingReward(b.x, bottomTrigger - 18, `+${reward}`);
 
       ballsInFlight.splice(bi, 1);
@@ -228,64 +416,9 @@ function step(now){
   requestAnimationFrame(step);
 }
 
-/* Render everything */
-function render(){
-  const W = canvas.clientWidth;
-  const H = canvas.clientHeight;
-  ctx.clearRect(0,0,W,H);
-
-  // pegs
-  for (let o of obstacles){
-    ctx.beginPath();
-    ctx.fillStyle = 'rgba(255,255,255,0.16)';
-    ctx.arc(o.x, o.y, o.r, 0, Math.PI*2);
-    ctx.fill();
-    ctx.beginPath();
-    ctx.strokeStyle = 'rgba(153,69,255,0.06)';
-    ctx.lineWidth = 6;
-    ctx.arc(o.x, o.y, o.r + 4, 0, Math.PI*2);
-    ctx.stroke();
-  }
-
-  // bins (centered)
-  for (let i = 0; i < bins.length; i++){
-    const b = bins[i];
-    ctx.fillStyle = 'rgba(255,255,255,0.03)';
-    ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.fillStyle = 'rgba(255,255,255,0.78)';
-    ctx.font = '700 13px Inter, system-ui';
-    ctx.textAlign = 'center';
-    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 6);
-  }
-
-  // bin separators
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  for (let i = 1; i < bins.length; i++){
-    const prev = bins[0];
-    const bx = prev.x + i * (prev.w + 6);
-    ctx.moveTo(bx, prev.y);
-    ctx.lineTo(bx, H);
-  }
-  ctx.stroke();
-
-  // balls
-  for (let b of ballsInFlight){
-    // shadow
-    ctx.beginPath();
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.arc(b.x + 2.5, b.y + 3.5, b.r + 2.2, 0, Math.PI*2);
-    ctx.fill();
-    // ball
-    ctx.beginPath();
-    ctx.fillStyle = '#fff';
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
-    ctx.fill();
-  }
-}
-
-/* floating reward */
+////////////////////
+// spawn floating reward (non-modal)
+////////////////////
 function spawnFloatingReward(x, y, text){
   const el = document.createElement('div');
   el.textContent = text;
@@ -312,7 +445,9 @@ function spawnFloatingReward(x, y, text){
   setTimeout(()=> el.remove(), 950);
 }
 
-/* spawn ball */
+////////////////////
+// spawn ball
+////////////////////
 function dropBall(){
   if (balls <= 0){
     showModal('<div style="font-weight:700">No balls left — wait for regen</div>');
@@ -328,7 +463,9 @@ function dropBall(){
   ballsInFlight.push({ x: startX, y: startY, vx: initVx, vy: initVy, r: ballRadius, alive: true });
 }
 
-/* regen */
+////////////////////
+// regen logic and UI helpers
+////////////////////
 function startRegen(){
   const now = Date.now();
   const elapsed = Math.floor((now - lastRegen) / 1000);
@@ -352,7 +489,9 @@ function startRegen(){
   }, regenSeconds * 1000);
 }
 
-/* modal & leaderboard */
+////////////////////
+// modal & leaderboard (unchanged)
+////////////////////
 function showModal(html){ dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
 function hideModal(){ dom.modal.classList.add('hidden'); }
 
@@ -370,8 +509,10 @@ function renderLeaderboard(){
   });
 }
 
-/* events */
-document.getElementById('dropBtn').addEventListener('click', dropBall);
+////////////////////
+// events binding
+////////////////////
+document.getElementById('dropBtn').addEventListener('click', () => { dropBall(); if (!audioCtx) { /* touch to enable audio on mobile */ }});
 document.getElementById('openLeaderboard').addEventListener('click', ()=> showScreen('leaderboard'));
 document.getElementById('backFromLeaderboard').addEventListener('click', ()=> showScreen('plinko'));
 document.getElementById('backFromLoot').addEventListener('click', ()=> showScreen('plinko'));
@@ -382,7 +523,7 @@ document.querySelectorAll('.loot-open').forEach(b => b.addEventListener('click',
   const reward = tier === 'legend' ? (Math.floor(Math.random()*150)+50) : (tier==='rare' ? (Math.floor(Math.random()*50)+15) : (Math.floor(Math.random()*20)+5));
   coins += reward; updateUI(); showModal(`<div style="font-size:18px;font-weight:800">🎉 You got ${reward} SOLX!</div>`);
 }));
-document.getElementById('copyRef').addEventListener('click', async ()=> {
+document.getElementById('copyRef')?.addEventListener('click', async ()=> {
   const inp = document.getElementById('refLink');
   try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); } catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
 });
@@ -397,7 +538,9 @@ function showScreen(k){
   if (k === 'leaderboard') renderLeaderboard();
 }
 
-/* init */
+////////////////////
+// INIT
+////////////////////
 let loopStarted = false;
 function init(){
   fitCanvas();
