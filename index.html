@@ -32,7 +32,7 @@
     </header>
 
     <main class="main">
-      <!-- Tap/Drop screen -->
+      <!-- Plinko screen -->
       <section id="screen-plinko" class="screen active">
         <div class="top-info">
           <div class="balls-info">Balls: <span id="ballsCount">100</span>/100</div>
@@ -41,11 +41,12 @@
 
         <div class="board-area">
           <div id="plinkoBoard" class="plinko-board" aria-hidden="false">
-            <!-- pegs & bins are rendered by JS -->
+            <!-- pegs & bins rendered by JS -->
           </div>
 
           <div class="drop-area">
-            <button id="dropBtn" class="coin-btn" aria-label="Drop a ball">🪙</button>
+            <!-- Changed to rectangular 'Drop' button -->
+            <button id="dropBtn" class="drop-btn" aria-label="Drop a ball">Drop</button>
             <div class="coins-count" id="coinsCount">0 SOLX</div>
           </div>
         </div>
@@ -130,9 +131,8 @@
   <script src="app.js"></script>
 
   <script>
-    // Prevent double-click default zoom on some desktop browsers
+    // Prevent double-click default zoom on some desktop browsers and gesturestart (iOS)
     document.addEventListener('dblclick', e => e.preventDefault());
-    // Also block gesturestart (iOS Safari)
     document.addEventListener('gesturestart', e => e.preventDefault());
   </script>
 </body>
