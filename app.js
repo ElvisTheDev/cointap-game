@@ -1,5 +1,4 @@
-/* app.js — SOLMAS Plinko (screens isolated, no-scroll, Drop +30%, Social tab) */
-/* Uses the same logic/features you already have (physics, boosts, leaderboard avatars, etc.) */
+/* app.js — prize boxes bigger & closer; UI tightened; menu emojis supported */
 
 const payouts = [500,100,50,20,5,1,1,5,20,50,100,500];
 const binsCount = payouts.length;
@@ -99,12 +98,12 @@ function updateUI(){
 /* ---------- sizing to avoid scroll ---------- */
 function fitCanvas(){
   const navH = 72; // match CSS var
-  const headerH = 56; // approx header height
-  const appH = window.innerHeight - navH - 20; // padding guard
-  // Allocate space: stats ~72px, actions ~84px, rest to canvas
+  const headerH = 56;
+  const appH = window.innerHeight - navH - 10 - 20; // 10px menu lift + padding guard
   const statsH = 72;
-  const actionsH = 84;
+  const actionsH = 80; // slightly tighter so actions sit higher
   const canvasAvail = Math.max(260, appH - headerH - statsH - actionsH);
+
   const cssWidth = Math.min(window.innerWidth * 0.92, 940);
   const cssHeight = Math.min(canvasAvail, 520);
 
@@ -116,6 +115,7 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
+/* ======== obstacles & bins (bigger, closer) ======== */
 function buildObstaclesAndBins(){
   obstacles = [];
   bins = [];
@@ -124,7 +124,7 @@ function buildObstaclesAndBins(){
   const H = canvas.clientHeight;
 
   const topPadding = Math.max(12, H * 0.03);
-  const bottomReserve = Math.max(82, H * 0.20);
+  const bottomReserve = Math.max(78, H * 0.18); // slightly tighter footer band
   const usableH = H - topPadding - bottomReserve;
 
   const widestCount = Math.max(...obstacleRows);
@@ -134,6 +134,7 @@ function buildObstaclesAndBins(){
   const rowsCount = obstacleRows.length;
   const vSpacing = usableH / (rowsCount + 1);
 
+  let lastPegY = topPadding;
   for (let r = 0; r < rowsCount; r++){
     const count = obstacleRows[r];
     const rowWidth = baseSpacing * (count + 1);
@@ -143,22 +144,29 @@ function buildObstaclesAndBins(){
       const x = rowLeft + (i + 1) * baseSpacing;
       obstacles.push({ x, y, r: obstacleRadius });
     }
+    lastPegY = y;
   }
 
-  // mobile-optimized rounded square bins
-  const binsY = H - bottomReserve + 10;
+  // Original bins top (aligned near bottom band)
+  const baseBinsTop = H - bottomReserve + 10;
+
+  // Move bins ~70% closer to the last peg row:
+  // newTop = lastPegY + 0.3 * (baseTop - lastPegY)  (i.e., compress the gap by 70%)
+  const binsTop = lastPegY + 0.3 * (baseBinsTop - lastPegY);
+
+  // Bigger, squarer bins:
   const minGap = 2;
-  const maxBoxFromHeight = (bottomReserve - 22);
+  const maxBoxFromHeight = Math.max(24, (H - binsTop) - 14);  // ensure fits below computed top
   const maxBoxFromWidth  = (availableWidth - minGap*(binsCount - 1)) / binsCount;
-  const vwTarget = Math.max(22, Math.min(34, Math.floor(window.innerWidth * 0.06)));
-  const boxSize = Math.max(22, Math.min(vwTarget, maxBoxFromWidth, maxBoxFromHeight));
+  const vwTarget = Math.max(26, Math.min(42, Math.floor(window.innerWidth * 0.07))); // ~7vw, clamped wider
+  const boxSize = Math.max(24, Math.min(vwTarget, maxBoxFromWidth, maxBoxFromHeight));
 
   const totalRowWidth = boxSize * binsCount + minGap * (binsCount - 1);
   const binsLeft = (W - totalRowWidth) / 2;
 
   for (let i = 0; i < binsCount; i++){
     const x = binsLeft + i * (boxSize + minGap);
-    const y = binsY + (bottomReserve - 10 - boxSize);
+    const y = binsTop; // top-aligned to our raised top
     bins.push({ x, y, w: boxSize, h: boxSize, i });
   }
 }
@@ -220,12 +228,12 @@ function render(){
       ctx.save();
       ctx.shadowColor = 'rgba(153,69,255,0.28)';
       ctx.shadowBlur = 20;
-      ctx.fillStyle = 'rgba(255,255,255,0.04)';
+      ctx.fillStyle = 'rgba(255,255,255,0.05)';
       drawRoundedRect(b.x, b.y, b.w, b.h, 10);
       ctx.fill();
       ctx.restore();
     } else {
-      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fillStyle = 'rgba(255,255,255,0.035)';
       drawRoundedRect(b.x, b.y, b.w, b.h, 10);
       ctx.fill();
     }
@@ -236,14 +244,14 @@ function render(){
     ctx.stroke();
 
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    const labelSize = Math.max(10, Math.min(13, Math.floor(b.w * 0.36)));
+    const labelSize = Math.max(11, Math.min(14, Math.floor(b.w * 0.34))); // scale with bigger boxes
     ctx.font = `700 ${labelSize}px Inter, system-ui`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
     ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2);
   }
 
-  // balls glow
+  // balls with glow
   for (let b of ballsInFlight){
     const glowR = Math.max(b.r * 4.5, 18);
     const grad = ctx.createRadialGradient(b.x, b.y, b.r*0.2, b.x, b.y, glowR);
@@ -261,6 +269,7 @@ function render(){
   }
 }
 
+/* ================= Confetti ================= */
 function startConfetti() {
   const W = canvas.getBoundingClientRect().width;
   const count = 140;
@@ -381,8 +390,9 @@ function step(now){
       if (collidingCircleCircle(b, obs)) resolveCircleCollision(b, obs);
     }
 
-    const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
-    if (b.y + b.r >= bottomTrigger){
+    const binsTop = bins.length ? bins[0].y : H - 80;
+    if (b.y + b.r >= binsTop){
+      // map x to bin index
       const firstLeft = bins[0].x;
       const lastRight = bins[bins.length-1].x + bins[bins.length-1].w;
       const span = lastRight - firstLeft;
@@ -400,7 +410,7 @@ function step(now){
       coins += reward;
       playLandSound(reward >= 100);
       if (reward === 500) startConfetti();
-      spawnFloatingReward(b.x, bottomTrigger - 18, `+${reward}`);
+      spawnFloatingReward(b.x, binsTop - 18, `+${reward}`);
       ballsInFlight.splice(bi, 1);
       updateUI();
     }
@@ -509,6 +519,7 @@ function showScreen(k){
   if (k === 'boost') renderBoosts();
 }
 
+/* ---------------- Theme ---------------- */
 function initTheme(){
   Object.assign(document.body.style, {
     background: 'radial-gradient(1200px 700px at 80% -10%, rgba(20,241,149,0.12), rgba(0,0,0,0)),'+
@@ -517,8 +528,6 @@ function initTheme(){
     backgroundAttachment: 'fixed',
     color: 'rgba(255,255,255,0.95)'
   });
-
-  // make Drop visually ~30% bigger (in case CSS misses)
   stylePrimaryButton(dom.dropBtn);
 }
 
@@ -543,7 +552,6 @@ document.getElementById('copyRef')?.addEventListener('click', async ()=> {
   catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
 });
 dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
-
 document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', ()=> showScreen(b.dataset.target)));
 
 /* ---------------- INIT ---------------- */
