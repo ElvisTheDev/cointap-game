@@ -1,23 +1,26 @@
-/* app.js - TUNED: 1/1000 500-coin acceptance, square bins, reduced glow, 500-box glow,
-   sounds on hits/land, confetti on 500, UI optimized to fit single screen.
+/* app.js - Updated per request:
+   - +2 peg rows (rows 3..14)
+   - stronger Solana glow on balls (restored)
+   - stronger glow on 500 coin bins
+   - at least 2px visual gap between prize boxes
+   - 1px gradient stroke around prize boxes (button color scheme)
+   - keeps 1/1000 acceptance for 500 bins and other features from tuned version
 */
 
 /* CONFIG */
-const payouts = [500,100,50,20,5,1,1,5,20,50,100,500]; // 12 bins
+const payouts = [500,100,50,20,5,1,1,5,20,50,100,500]; // 12 bins (unchanged)
 const binsCount = payouts.length;
 
 const ballRadius = 4;                // px
-const obstacleRadius = 4;           // px (reduced by another ~30%)
-const gravity = 1200;               // px/s^2
+const obstacleRadius = 4;            // px
+const gravity = 1200;                // px/s^2
 const restitution = 0.72;
 const friction = 0.995;
 const maxBalls = 100;
 const regenSeconds = 60;
 
-// physics center bias still applied (keeps center-heavy physics)
+// center bias and edge acceptance for 500 bins
 const centerBias = 6.4;
-
-// guaranteed acceptance probability for 500 bins (1/1000)
 const EDGE_ACCEPT_PROB = 0.001;
 
 ////////////////////
@@ -53,7 +56,6 @@ let regenInterval = null, regenCountdownInterval = null;
 let obstacles = [];   // {x,y,r}
 let bins = [];        // {x,y,w,h,i}
 let ballsInFlight = []; // {x,y,vx,vy,r,alive}
-
 let confettiParticles = [];
 let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) ? TELEGRAM.initDataUnsafe.user : { id: 'local_'+Math.floor(Math.random()*99999), first_name: 'You' };
 
@@ -116,14 +118,11 @@ function updateUI(){
 }
 
 ////////////////////
-// CANVAS & LAYOUT TWEAKS (UI optimization)
-// We shrink canvas height so buttons and UI fit on single mobile screen.
+// CANVAS + LAYOUT (UI optimized fits screen)
 ////////////////////
 function fitCanvas(){
-  // aim to keep full UI visible: set canvas height smaller than before
-  const cssWidth = Math.min(window.innerWidth * 0.92, 900);
-  // reduce height proportion so buttons & header fit: max 46% or 520px cap
-  const cssHeight = Math.min(Math.max(360, window.innerHeight * 0.46), 520);
+  const cssWidth = Math.min(window.innerWidth * 0.92, 940);
+  const cssHeight = Math.min(Math.max(340, window.innerHeight * 0.44), 520);
   canvas.style.width = cssWidth + 'px';
   canvas.style.height = cssHeight + 'px';
   const ratio = window.devicePixelRatio || 1;
@@ -132,8 +131,8 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
-// obstacle rows same as last pyramid
-const obstacleRows = [3,4,5,6,7,8,9,10,11,12];
+/* NEW: 2 extra rows added (3..14) */
+const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14]; // now 12 rows (was 10)
 
 function buildObstaclesAndBins(){
   obstacles = [];
@@ -164,15 +163,18 @@ function buildObstaclesAndBins(){
     }
   }
 
-  // square bins: make bin.h = bin.w for visual square boxes
+  // square bins with visual gap >= 2px and 1px gradient stroke
   const binsY = canvas.clientHeight - bottomReserve + 12;
-  const binWidth = availableWidth / binsCount;
-  const binsLeft = (W - availableWidth) / 2;
+  const totalGap = Math.max(2, 2) * (binsCount - 1); // at least 2px gap each between boxes
+  const rawBinAreaWidth = availableWidth - totalGap;
+  const gapPx = 2;
+  const binSize = Math.max(34, Math.min((rawBinAreaWidth / binsCount), bottomReserve - 28));
+  const binsLeft = (W - (binSize * binsCount + gapPx * (binsCount - 1))) / 2;
+
   for (let i = 0; i < binsCount; i++){
-    const x = binsLeft + i * binWidth;
-    const size = Math.max(36, Math.min(binWidth - 6, bottomReserve - 28)); // square size
-    const y = binsY + (bottomReserve - 12 - size); // align top so box sits nicely
-    bins.push({ x, y, w: size, h: size, i });
+    const x = binsLeft + i * (binSize + gapPx);
+    const y = binsY + (bottomReserve - 12 - binSize);
+    bins.push({ x, y, w: binSize, h: binSize, i });
   }
 }
 
@@ -204,7 +206,7 @@ function resolveCircleCollision(ball, obs){
 }
 
 ////////////////////
-// RENDER (reduced glow on ball by ~70% and 500-box glow)
+// RENDER (restored strong ball glow + 500 box glow + 1px gradient stroke + 2px gaps)
 ////////////////////
 function render(){
   const W = canvas.clientWidth;
@@ -219,48 +221,48 @@ function render(){
     ctx.fill();
   }
 
-  // bins (square)
+  // draw bins: fill, stroke gradient border, and 500 glow
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
-    // glow for 500 bins (slight)
+
+    // create stroke gradient matching button colors (purple -> teal)
+    const gradStroke = ctx.createLinearGradient(b.x, b.y, b.x + b.w, b.y + b.h);
+    gradStroke.addColorStop(0, '#9945FF'); // purple
+    gradStroke.addColorStop(1, '#0ABDE3'); // teal
+
+    // 500-bin glow (stronger)
     if (payouts[i] === 500){
       ctx.save();
-      ctx.shadowColor = 'rgba(153,69,255,0.25)';
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.shadowColor = 'rgba(153,69,255,0.28)'; // purple-ish glow
+      ctx.shadowBlur = 20;
+      ctx.fillStyle = 'rgba(255,255,255,0.04)';
       ctx.fillRect(b.x, b.y, b.w, b.h);
       ctx.restore();
     } else {
       ctx.fillStyle = 'rgba(255,255,255,0.03)';
       ctx.fillRect(b.x, b.y, b.w, b.h);
     }
-    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+
+    // stroke (1px) using gradient
+    ctx.lineWidth = 1;
+    ctx.strokeStyle = gradStroke;
+    ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1); // 0.5 to align crisp 1px
+
+    // draw payout label
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
     ctx.font = '700 12px Inter, system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 5);
+    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 4);
   }
 
-  // separators (visual grid lines between squares)
-  ctx.strokeStyle = 'rgba(255,255,255,0.04)';
-  ctx.lineWidth = 1;
-  ctx.beginPath();
-  if (bins.length > 0){
-    for (let i = 1; i < bins.length; i++){
-      const bx = bins[0].x + i * (bins[0].w + ((canvas.clientWidth - bins[bins.length-1].x - bins[bins.length-1].w) - bins[0].x) / (bins.length - 1));
-      ctx.moveTo(bx, bins[0].y);
-      ctx.lineTo(bx, H);
-    }
-  }
-  ctx.stroke();
-
-  // balls with reduced glow (~70% less)
+  // balls with restored (stronger) Solana glow
   for (let b of ballsInFlight){
-    // smaller glow radius + lower alpha to reduce intensity
-    const glowR = b.r * 2;         // reduced from ~6x to ~2x
-    const grad = ctx.createRadialGradient(b.x, b.y, b.r*0.25, b.x, b.y, glowR);
-    grad.addColorStop(0, 'rgba(153,69,255,0.7)'); // purple core
-    grad.addColorStop(0.45, 'rgba(153,69,255,0.25)');
-    grad.addColorStop(0.8, 'rgba(10,189,227,0.18)'); // teal outer
+    // stronger glow radius & alpha
+    const glowR = Math.max(b.r * 4.5, 18); // significant glow
+    const grad = ctx.createRadialGradient(b.x, b.y, b.r*0.2, b.x, b.y, glowR);
+    grad.addColorStop(0, 'rgba(153,69,255,0.95)'); // purple dense
+    grad.addColorStop(0.35, 'rgba(153,69,255,0.55)');
+    grad.addColorStop(0.65, 'rgba(10,189,227,0.45)'); // teal outer
     grad.addColorStop(1, 'rgba(10,189,227,0)');
     ctx.beginPath();
     ctx.fillStyle = grad;
@@ -282,7 +284,7 @@ function render(){
 }
 
 ////////////////////
-// CONFETTI (same as before)
+// CONFETTI (unchanged)
 ////////////////////
 function startConfetti() {
   const W = canvas.getBoundingClientRect().width;
@@ -336,7 +338,7 @@ function drawConfetti(now){
 }
 
 ////////////////////
-// PHYSICS LOOP + 1/1000 post-processing for 500-bins
+// PHYSICS LOOP + 1/1000 acceptance
 ////////////////////
 let lastTime = null;
 function step(now){
@@ -352,12 +354,10 @@ function step(now){
     const b = ballsInFlight[bi];
     if (!b.alive) { ballsInFlight.splice(bi,1); continue; }
 
-    // center bias acceleration -> reduces edge hits
     const dxCenter = (centerX - b.x);
     const axCenter = dxCenter * centerBias * 0.001;
     b.vx += axCenter * dt;
 
-    // integrate gravity and friction
     b.vy += gravity * dt;
     b.vx *= Math.pow(friction, dt*60);
     b.vy *= Math.pow(friction, dt*60);
@@ -365,7 +365,6 @@ function step(now){
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    // walls
     if (b.x - b.r < 4){
       b.x = 4 + b.r;
       b.vx = Math.abs(b.vx) * restitution;
@@ -375,7 +374,6 @@ function step(now){
       b.vx = -Math.abs(b.vx) * restitution;
     }
 
-    // obstacle collisions
     for (let oi = 0; oi < obstacles.length; oi++){
       const obs = obstacles[oi];
       if (collidingCircleCircle(b, obs)){
@@ -383,12 +381,9 @@ function step(now){
       }
     }
 
-    // bottom detection -> bin
     const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
     if (b.y + b.r >= bottomTrigger){
-      // determine raw physics bin (based on x within bins region)
       const binsLeft = bins[0] ? bins[0].x : 8;
-      // compute available width as last.right - first.left
       const lastRight = bins[bins.length-1].x + bins[bins.length-1].w;
       const availableWidth = lastRight - binsLeft;
       let relX = (b.x - binsLeft) / availableWidth;
@@ -397,31 +392,23 @@ function step(now){
       rawBinIndex = Math.max(0, Math.min(binsCount - 1, rawBinIndex));
       let finalBin = rawBinIndex;
 
-      // If ball landed in an EDGE 500 bin -> accept with EDGE_ACCEPT_PROB else remap inward
+      // post-process 500 acceptance
       if (payouts[rawBinIndex] === 500) {
         if (Math.random() < EDGE_ACCEPT_PROB) {
-          finalBin = rawBinIndex; // accept rare jackpot
+          finalBin = rawBinIndex;
         } else {
-          // remap: pick nearest non-500 bin moving inward.
-          // if left edge -> pick index 1; if right edge -> pick last-1
           if (rawBinIndex === 0) finalBin = 1;
           else if (rawBinIndex === binsCount - 1) finalBin = binsCount - 2;
-          else finalBin = rawBinIndex; // fallback (shouldn't happen)
+          else finalBin = rawBinIndex;
         }
       }
 
       const reward = payouts[finalBin] || 0;
       coins += reward;
-
-      // play sound: big for >=100 or 500
       playLandSound(reward >= 100 ? true : false);
-
-      // confetti for accepted 500 (only when finalBin is 500)
       if (reward === 500) startConfetti();
 
-      // small floating +X
       spawnFloatingReward(b.x, bottomTrigger - 18, `+${reward}`);
-
       ballsInFlight.splice(bi, 1);
       updateUI();
       continue;
@@ -433,7 +420,7 @@ function step(now){
 }
 
 ////////////////////
-// spawn reward animation
+// spawn floating reward
 ////////////////////
 function spawnFloatingReward(x, y, text){
   const el = document.createElement('div');
@@ -480,7 +467,7 @@ function dropBall(){
 }
 
 ////////////////////
-// regen and UI
+// regen & UI
 ////////////////////
 function startRegen(){
   const now = Date.now();
