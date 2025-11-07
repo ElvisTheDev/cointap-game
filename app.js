@@ -1,6 +1,8 @@
-/* app.js — payouts updated; probability bias; Earn screen rendering; menu offset synced */
+/* app.js — referral auto-award on open; startapp=ref_<id> parsing; ref link filled with user id */
 
-const payouts = [100,50,20,10,5,1,1,5,10,20,50,100]; // updated prizes
+const BOT_USERNAME = 'your_bot'; // <-- CHANGE to your bot username (without @), e.g. 'solmas_plinko_bot'
+
+const payouts = [100,50,20,10,5,1,1,5,10,20,50,100]; // unchanged from last step
 const binsCount = payouts.length;
 
 const BASE_MAX_BALLS = 100;
@@ -16,9 +18,9 @@ const BASE_REGEN_SECONDS = 60;
 const SPEEDSTER_MULTIPLIER = 0.5;
 
 const centerBias = 6.4;
-const EDGE_ACCEPT_PROB = 0.001; // still makes edge jackpots rare at physics stage
+const EDGE_ACCEPT_PROB = 0.001;
 
-// Target landing distribution (remaining mass favors 1/5/10)
+// Desired landing distribution
 const TARGET_PROBS = { 100:0.005, 50:0.01, 20:0.10, 10:0.085, 5:0.20, 1:0.60 };
 
 const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14];
@@ -47,6 +49,8 @@ const dom = {
   invitedCount: document.getElementById('invitedCount'),
   earnFriendsList: document.getElementById('earnFriendsList'),
   inviteTopList: document.getElementById('inviteTopList'),
+  refLink: document.getElementById('refLink'),
+  copyRef: document.getElementById('copyRef'),
 };
 
 function getTelegramUser(){
@@ -71,7 +75,7 @@ let bins = [];
 let ballsInFlight = [];
 let confettiParticles = [];
 
-/* ===== Boosts (Speedster, Maxi, Spender, Nuke) ===== */
+/* ===== Boosts ===== */
 let boosts = JSON.parse(localStorage.getItem('sc_boosts') || '{}');
 if (!boosts || typeof boosts !== 'object') boosts = {};
 function isSpeedster(){ return (boosts.speedsterUntil || 0) > Date.now(); }
@@ -89,7 +93,7 @@ function ensureAudio(){ if (!audioCtx) audioCtx = new AudioCtx(); }
 function playHitSound(){ try{ ensureAudio(); const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.type='square'; o.frequency.setValueAtTime(880+Math.random()*80,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.04,t+0.004); g.gain.exponentialRampToValueAtTime(0.0001,t+0.12); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+0.14);}catch(e){} }
 function playLandSound(big=false){ try{ ensureAudio(); const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.type='sine'; o.frequency.setValueAtTime(big?220:440,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(big?0.09:0.035,t+0.008); g.gain.exponentialRampToValueAtTime(0.0001,t+(big?0.7:0.22)); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+(big?0.72:0.24)); }catch(e){} }
 
-/* ===== State/UI ===== */
+/* ===== Persistence/UI ===== */
 function saveState(){
   localStorage.setItem('sc_coins', String(coins));
   localStorage.setItem('sc_balls', String(balls));
@@ -110,11 +114,52 @@ function updateUI(){
   renderBoosts();
 }
 
+/* ===== Start parameters (Telegram WebApp + URL fallback) ===== */
+function getStartParam(){
+  // Telegram: initDataUnsafe.start_param (preferred)
+  const fromTG = TELEGRAM?.initDataUnsafe?.start_param;
+  if (fromTG) return fromTG;
+  // As a fallback (e.g. dev in browser), read ?startapp=... or ?start=...
+  const sp = new URLSearchParams(window.location.search);
+  return sp.get('startapp') || sp.get('start') || '';
+}
+
+/* Auto-award referral on first open with ref_<inviterId> */
+function handleReferralOnOpen(){
+  const param = getStartParam();
+  if (!param || !/^ref_/i.test(param)) return;
+  const inviterId = String(param.replace(/^ref_/i, ''));
+  // Prevent self-ref and double-claim per inviter
+  if (!inviterId || inviterId === tgUser.id) return;
+  const claimedKey = `sc_ref_claimed_${inviterId}`;
+  if (localStorage.getItem(claimedKey)) return;
+
+  // Award invitee
+  coins += 200;
+  balls = Math.min(maxBalls(), balls + 100);
+
+  // Mark claimed and remember inviter
+  localStorage.setItem('sc_inviter_id', inviterId);
+  localStorage.setItem(claimedKey, '1');
+
+  updateUI();
+  showModal('<div style="font-weight:800;font-size:16px">🎁 Welcome! You received 🪙 200 coins and ⚪ 100 balls for joining via a friend.</div>');
+}
+
+/* Fill referral link with this user’s id */
+function setReferralLink(){
+  if (!dom.refLink) return;
+  // Telegram mini app deep-link uses startapp
+  const code = `ref_${tgUser.id}`;
+  const link = `https://t.me/${BOT_USERNAME}?startapp=${encodeURIComponent(code)}`;
+  dom.refLink.value = link;
+}
+
 /* ===== Layout sizing ===== */
 function fitCanvas(){
   const navH = 58;
   const headerH = 56;
-  const appH = window.innerHeight - navH - 11 - 0; // menu lifted + buffer
+  const appH = window.innerHeight - navH - 11 - 0;
   const statsH = 72;
   const actionsH = 80;
   const canvasAvail = Math.max(260, appH - headerH - statsH - actionsH);
@@ -280,7 +325,6 @@ function render(){
 }
 
 /* ===== Confetti ===== */
-let confettiParticles = [];
 function startConfetti(){
   const W = canvas.getBoundingClientRect().width;
   const count = 140;
@@ -361,20 +405,20 @@ function renderLeaderboard(){
   });
 }
 
-/* ===== Earn (referrals UI only; storage placeholders) ===== */
+/* ===== Earn (UI only; local placeholders) ===== */
 function renderEarn(){
   if (!dom.invitedCount || !dom.earnFriendsList || !dom.inviteTopList) return;
 
+  // friends invited (placeholder list)
   const invited = JSON.parse(localStorage.getItem('sc_invited_friends') || '[]'); // [{name,username,photo_url}]
   dom.invitedCount.textContent = invited.length;
 
-  // friends list
   const list = dom.earnFriendsList;
   list.innerHTML = '';
   if (!invited.length){
     list.innerHTML = '<div class="muted">No friends yet — share your link!</div>';
   } else {
-    invited.forEach((f,idx)=>{
+    invited.forEach((f)=>{
       const row=document.createElement('div');
       Object.assign(row.style,{display:'flex',alignItems:'center',gap:'10px',padding:'8px 10px',borderRadius:'12px',background:'rgba(255,255,255,0.04)'});
       const av=document.createElement('div'); Object.assign(av.style,{width:'32px',height:'32px',borderRadius:'50%',overflow:'hidden',display:'flex',alignItems:'center',justifyContent:'center',background:'linear-gradient(90deg,#9945FF,#0ABDE3)'});
@@ -387,7 +431,7 @@ function renderEarn(){
     });
   }
 
-  // global top by invites (placeholder local list)
+  // global top by invites (placeholder)
   const top = JSON.parse(localStorage.getItem('sc_invite_global') || '[]'); // [{name,username,invites,photo_url}]
   const topList = dom.inviteTopList;
   topList.innerHTML = '';
@@ -413,7 +457,7 @@ function renderEarn(){
   }
 }
 
-/* ===== Physics & loop ===== */
+/* ===== Physics loop ===== */
 let lastTime = null;
 function step(now){
   if (!lastTime) lastTime = now;
@@ -444,7 +488,6 @@ function step(now){
 
     const binsTop = bins.length ? bins[0].y : (H - 80);
     if (b.y + b.r >= binsTop){
-      // Physics-chosen bin index
       const firstLeft = bins[0].x;
       const lastRight = bins[bins.length-1].x + bins[bins.length-1].w;
       const span = lastRight - firstLeft;
@@ -452,15 +495,11 @@ function step(now){
       let idx = Math.floor(relX * binsCount);
       idx = Math.max(0, Math.min(binsCount-1, idx));
 
-      // Remap to enforce target distribution while keeping x feel:
-      // Pick a payout by TARGET_PROBS, then snap to nearest bin with that payout
       const chosenPayout = weightedPick(TARGET_PROBS);
       const nearestIdx = nearestBinIndexForPayout(idx, chosenPayout);
       let finalIdx = (nearestIdx != null) ? nearestIdx : idx;
 
-      // Keep edges ultra-rare if final is 100 (jackpot)
       if (payouts[finalIdx] === 100 && Math.random() >= TARGET_PROBS[100]) {
-        // push inward one bin if random reject
         if (finalIdx === 0) finalIdx = 1;
         else if (finalIdx === binsCount-1) finalIdx = binsCount-2;
       }
@@ -490,11 +529,9 @@ function weightedPick(map){
   return Number(Object.keys(map).pop());
 }
 function nearestBinIndexForPayout(aroundIdx, payout){
-  // collect indices of bins with desired payout
   const indices = [];
   for (let i=0;i<payouts.length;i++) if (payouts[i] === payout) indices.push(i);
   if (!indices.length) return null;
-  // pick the index from 'indices' nearest to aroundIdx
   let best = indices[0], bestDist = Math.abs(indices[0]-aroundIdx);
   for (let i=1;i<indices.length;i++){
     const d = Math.abs(indices[i]-aroundIdx);
@@ -637,13 +674,13 @@ function stylePrimary(btn){
 }
 
 /* ===== Events & Init ===== */
-document.getElementById('dropBtn')?.addEventListener('click', dropBall);
-document.getElementById('copyRef')?.addEventListener('click', async ()=>{
-  const inp=document.getElementById('refLink');
-  try{ await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
+dom.copyRef && dom.copyRef.addEventListener('click', async ()=>{
+  if (!dom.refLink) return;
+  try{ await navigator.clipboard.writeText(dom.refLink.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
   catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
 });
 dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
+document.getElementById('dropBtn')?.addEventListener('click', dropBall);
 document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', ()=> showScreen(b.dataset.target)));
 
 let loopStarted = false;
@@ -651,6 +688,8 @@ function init(){
   initTheme();
   fitCanvas();
   buildObstaclesAndBins();
+  setReferralLink();           // fill link
+  handleReferralOnOpen();      // auto-award if opened via ref
   if (balls > maxBalls()) balls = maxBalls();
   updateUI();
   renderLeaderboard();
