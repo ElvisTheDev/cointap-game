@@ -1,22 +1,100 @@
-body {
-  font-family: sans-serif;
-  text-align: center;
-  background: #f0f0f0;
-  padding: 20px;
+:root{
+  --bg1:#05060a;
+  --sol-purple:#9945FF;
+  --sol-cyan:#0ABDE3;
+  --sol-green:#14F195;
+  --accent-red:#FF4757;
+  --glass: rgba(255,255,255,0.06);
+  --muted: rgba(255,255,255,0.6);
+  --card: rgba(255,255,255,0.04);
 }
 
-#tapBtn, #lootboxBtn {
-  font-size: 24px;
-  padding: 20px;
-  margin: 10px;
-  cursor: pointer;
+*{box-sizing:border-box}
+html,body,#app{height:100%;margin:0;padding:0}
+body{
+  font-family: Inter, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial;
+  background: radial-gradient(circle at 10% 10%, rgba(153,69,255,0.06), transparent 6%), linear-gradient(180deg,#05060a 0%, #071227 60%);
+  color:#fff;
+  -webkit-font-smoothing:antialiased;
+  -moz-osx-font-smoothing:grayscale;
 }
 
-#coins {
-  font-size: 30px;
-  margin-top: 20px;
+/* header */
+.header{
+  padding:14px 16px 10px;
+  display:flex;
+  align-items:center;
+  justify-content:space-between;
+}
+.sub{font-size:12px;color:var(--muted);letter-spacing:0.08em}
+.title{margin:4px 0 0;font-size:20px}
+
+/* balance pill */
+.balance{
+  padding:8px 12px;border-radius:999px;background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000;font-weight:700;font-size:14px;
 }
 
-#leaderboard {
-  margin-top: 30px;
+/* main area */
+.main{padding:8px 16px 80px;min-height:calc(100vh - 160px);position:relative}
+.screen{display:none}
+.screen.active{display:block}
+
+/* coin area */
+.coin-area{display:flex;flex-direction:column;align-items:center;justify-content:center;margin-top:20px}
+.coin-btn{
+  width:170px;height:170px;border-radius:50%;border:none;outline:none;
+  background:linear-gradient(180deg,var(--sol-green),var(--sol-cyan) 45%,var(--sol-purple));
+  box-shadow:0 20px 40px rgba(0,0,0,0.45), 0 0 40px rgba(153,69,255,0.14) inset;
+  display:flex;align-items:center;justify-content:center;font-size:40px;cursor:pointer;
+  transform:translateZ(0);
 }
+.coin-btn:active{transform:scale(0.98)}
+.coins-count{margin-top:12px;font-weight:700;font-size:20px;color:white;text-shadow:0 6px 20px rgba(0,0,0,0.5)}
+
+/* controls */
+.controls{display:flex;gap:10px;margin-top:18px;justify-content:center}
+.btn{padding:10px 14px;border-radius:12px;border:none;cursor:pointer;font-weight:700}
+.btn.loot{background:linear-gradient(90deg,var(--sol-cyan),var(--sol-purple));color:#000}
+.btn.dark{background:var(--card);color:#fff}
+.btn:hover{filter:brightness(1.04)}
+
+/* placeholder chad */
+.chad-placeholder{margin-top:20px;text-align:center;padding:12px;border-radius:12px;background:linear-gradient(180deg,rgba(255,255,255,0.02),transparent);color:var(--muted)}
+
+/* panels */
+.panel{background:linear-gradient(180deg, rgba(255,255,255,0.02), transparent); padding:14px;border-radius:12px}
+.leaderboard-list{margin-top:10px}
+.leaderboard-list .row{display:flex;align-items:center;justify-content:space-between;padding:10px 8px;border-radius:8px;margin-bottom:8px;background:rgba(255,255,255,0.02)}
+.leaderboard-list .row .meta{display:flex;gap:10px;align-items:center}
+.leaderboard-list .row .rank{width:36px;height:36px;border-radius:999px;display:flex;align-items:center;justify-content:center;font-weight:800}
+.leaderboard-list .row .rank.first{background:linear-gradient(90deg,var(--sol-purple),var(--sol-green));color:#000}
+
+/* loot grid */
+.loot-grid{display:grid;grid-template-columns:repeat(1,1fr);gap:10px;margin-top:12px}
+@media(min-width:720px){.loot-grid{grid-template-columns:repeat(3,1fr)}}
+.loot-card{padding:12px;border-radius:12px;background:rgba(255,255,255,0.02);text-align:center}
+.loot-tier{font-weight:800}
+.loot-emoji{font-size:32px;margin-top:6px}
+
+/* referrals */
+.ref-box{display:flex;gap:8px;margin-top:12px}
+.ref-box input{flex:1;padding:10px;border-radius:10px;border:none;background:rgba(255,255,255,0.03);color:#fff}
+.ref-box button{padding:10px 12px;border-radius:10px;background:linear-gradient(90deg,var(--sol-purple),var(--sol-cyan));color:#000}
+
+/* bottom nav */
+.bottom-nav{
+  position:fixed;left:8px;right:8px;bottom:14px;padding:8px 10px;border-radius:16px;background:linear-gradient(180deg,rgba(0,0,0,0.5),rgba(0,0,0,0.65));
+  display:flex;gap:6px;align-items:center;justify-content:space-between;z-index:50
+}
+.nav-btn{flex:1;padding:8px;border-radius:12px;background:transparent;border:none;color:#c7d2e6;display:flex;flex-direction:column;align-items:center;gap:4px;font-weight:700}
+.nav-btn.active{background:linear-gradient(90deg,var(--sol-purple),var(--sol-cyan));color:#000}
+
+/* modal */
+.modal{position:fixed;inset:0;display:flex;align-items:center;justify-content:center;background:rgba(0,0,0,0.5);z-index:60}
+.modal.hidden{display:none}
+.modal-card{background:#071227;padding:18px;border-radius:12px;width:88%;max-width:420px;border:1px solid rgba(255,255,255,0.04)}
+.modal-actions{margin-top:14px;text-align:right}
+
+/* small helpers */
+.muted{color:var(--muted)}
+.panel-actions{margin-top:10px;text-align:center}
