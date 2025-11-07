@@ -1,27 +1,27 @@
-/* app.js - Updated: smaller pegs, 500-coin end bins, center bias for center-heavy distribution,
-   Solana glow on balls, WebAudio sounds for collisions/land, confetti on 500-coin hit.
-   Keep index.html and style.css as before (canvas id = plinkoCanvas, etc.) */
+/* app.js - TUNED: 1/1000 500-coin acceptance, square bins, reduced glow, 500-box glow,
+   sounds on hits/land, confetti on 500, UI optimized to fit single screen.
+*/
 
-////////////////////
-// CONFIG
-////////////////////
+/* CONFIG */
 const payouts = [500,100,50,20,5,1,1,5,20,50,100,500]; // 12 bins
 const binsCount = payouts.length;
 
-const ballRadius = 4;            // px (unchanged)
-const obstacleRadius = Math.max(2, Math.round(6 * 0.7)); // 6 previously, reduced by another 30% => 4.2 -> round 4
-// (set to 4)
-const gravity = 1200;           // px/s^2
+const ballRadius = 4;                // px
+const obstacleRadius = 4;           // px (reduced by another ~30%)
+const gravity = 1200;               // px/s^2
 const restitution = 0.72;
 const friction = 0.995;
 const maxBalls = 100;
 const regenSeconds = 60;
 
-// physics bias to encourage center landings (tuneable)
-const centerBias = 6.4; // acceleration strength (px/s^2 per px from center). Increase = stronger central pull.
+// physics center bias still applied (keeps center-heavy physics)
+const centerBias = 6.4;
+
+// guaranteed acceptance probability for 500 bins (1/1000)
+const EDGE_ACCEPT_PROB = 0.001;
 
 ////////////////////
-// DOM & TELEGRAM
+// DOM + TELEGRAM
 ////////////////////
 const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 if (TELEGRAM) { try { TELEGRAM.ready(); } catch(e) {} }
@@ -54,18 +54,15 @@ let obstacles = [];   // {x,y,r}
 let bins = [];        // {x,y,w,h,i}
 let ballsInFlight = []; // {x,y,vx,vy,r,alive}
 
-let confettiParticles = []; // for confetti overlay particles
-
+let confettiParticles = [];
 let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) ? TELEGRAM.initDataUnsafe.user : { id: 'local_'+Math.floor(Math.random()*99999), first_name: 'You' };
 
 ////////////////////
-// AUDIO (WebAudio simple tones)
+// AUDIO
 ////////////////////
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
-function ensureAudio() {
-  if (!audioCtx) audioCtx = new AudioCtx();
-}
+function ensureAudio() { if (!audioCtx) audioCtx = new AudioCtx(); }
 function playHitSound() {
   try {
     ensureAudio();
@@ -73,13 +70,13 @@ function playHitSound() {
     const o = audioCtx.createOscillator();
     const g = audioCtx.createGain();
     o.type = 'square';
-    o.frequency.setValueAtTime(880, t); // high feedback
+    o.frequency.setValueAtTime(880 + Math.random()*80, t);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(0.05, t + 0.005);
-    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.15);
+    g.gain.exponentialRampToValueAtTime(0.04, t + 0.004);
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
     o.connect(g); g.connect(audioCtx.destination);
-    o.start(t); o.stop(t + 0.16);
-  } catch(e) { /* ignore */ }
+    o.start(t); o.stop(t + 0.14);
+  } catch(e) {}
 }
 function playLandSound(isBig=false) {
   try {
@@ -90,7 +87,7 @@ function playLandSound(isBig=false) {
     o.type = 'sine';
     o.frequency.setValueAtTime(isBig ? 220 : 440, t);
     g.gain.setValueAtTime(0.0001, t);
-    g.gain.exponentialRampToValueAtTime(isBig ? 0.09 : 0.04, t + 0.01);
+    g.gain.exponentialRampToValueAtTime(isBig ? 0.09 : 0.035, t + 0.008);
     g.gain.exponentialRampToValueAtTime(0.0001, t + (isBig ? 0.7 : 0.22));
     o.connect(g); g.connect(audioCtx.destination);
     o.start(t); o.stop(t + (isBig ? 0.72 : 0.24));
@@ -98,7 +95,7 @@ function playLandSound(isBig=false) {
 }
 
 ////////////////////
-// STORAGE helpers
+// STORAGE & UI
 ////////////////////
 function saveState(){
   localStorage.setItem('sc_coins', String(coins));
@@ -119,11 +116,14 @@ function updateUI(){
 }
 
 ////////////////////
-// CANVAS setup & pyramid builder (centered)
+// CANVAS & LAYOUT TWEAKS (UI optimization)
+// We shrink canvas height so buttons and UI fit on single mobile screen.
 ////////////////////
 function fitCanvas(){
-  const cssWidth = Math.min(window.innerWidth * 0.92, 940);
-  const cssHeight = Math.max(420, window.innerHeight * 0.56);
+  // aim to keep full UI visible: set canvas height smaller than before
+  const cssWidth = Math.min(window.innerWidth * 0.92, 900);
+  // reduce height proportion so buttons & header fit: max 46% or 520px cap
+  const cssHeight = Math.min(Math.max(360, window.innerHeight * 0.46), 520);
   canvas.style.width = cssWidth + 'px';
   canvas.style.height = cssHeight + 'px';
   const ratio = window.devicePixelRatio || 1;
@@ -132,7 +132,8 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
-const obstacleRows = [3,4,5,6,7,8,9,10,11,12]; // 10 rows retained
+// obstacle rows same as last pyramid
+const obstacleRows = [3,4,5,6,7,8,9,10,11,12];
 
 function buildObstaclesAndBins(){
   obstacles = [];
@@ -141,13 +142,12 @@ function buildObstaclesAndBins(){
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
 
-  const topPadding = Math.max(18, H * 0.04);
-  const bottomReserve = Math.max(100, H * 0.18);
+  const topPadding = Math.max(14, H * 0.03);
+  const bottomReserve = Math.max(96, H * 0.20);
   const usableH = H - topPadding - bottomReserve;
 
-  // widest row count
   const widestCount = Math.max(...obstacleRows);
-  const sideMargin = Math.max(0.06 * W, 24);
+  const sideMargin = Math.max(0.06 * W, 18);
   const availableWidth = W - sideMargin * 2;
   const baseSpacing = availableWidth / (widestCount + 1);
   const rowsCount = obstacleRows.length;
@@ -155,7 +155,6 @@ function buildObstaclesAndBins(){
 
   for (let r = 0; r < rowsCount; r++){
     const count = obstacleRows[r];
-    // center row with same spacing
     const rowWidth = baseSpacing * (count + 1);
     const rowLeft = (W - rowWidth) / 2;
     const y = topPadding + (r + 1) * vSpacing;
@@ -165,18 +164,20 @@ function buildObstaclesAndBins(){
     }
   }
 
-  // bins: center under pyramid spanning availableWidth
+  // square bins: make bin.h = bin.w for visual square boxes
   const binsY = canvas.clientHeight - bottomReserve + 12;
   const binWidth = availableWidth / binsCount;
   const binsLeft = (W - availableWidth) / 2;
   for (let i = 0; i < binsCount; i++){
     const x = binsLeft + i * binWidth;
-    bins.push({ x, y: binsY, w: Math.max(24, binWidth - 6), h: Math.max(60, bottomReserve - 24), i });
+    const size = Math.max(36, Math.min(binWidth - 6, bottomReserve - 28)); // square size
+    const y = binsY + (bottomReserve - 12 - size); // align top so box sits nicely
+    bins.push({ x, y, w: size, h: size, i });
   }
 }
 
 ////////////////////
-// COLLISION helpers (circle-vs-circle)
+// COLLISIONS
 ////////////////////
 function collidingCircleCircle(a, b){
   const dx = a.x - b.x;
@@ -185,9 +186,7 @@ function collidingCircleCircle(a, b){
   const minR = (a.r + b.r);
   return dist2 < (minR * minR);
 }
-
 function resolveCircleCollision(ball, obs){
-  // normal
   let nx = ball.x - obs.x;
   let ny = ball.y - obs.y;
   const dist = Math.hypot(nx, ny) || 0.0001;
@@ -200,67 +199,78 @@ function resolveCircleCollision(ball, obs){
   ball.vy = ball.vy - 2 * vdotn * ny;
   ball.vx *= restitution;
   ball.vy *= restitution;
-  // small randomness to break symmetry
-  ball.vx += (Math.random() - 0.5) * 10;
-  // sound on hit
+  ball.vx += (Math.random() - 0.5) * 8;
   playHitSound();
 }
 
 ////////////////////
-// RENDER helpers (ball glow + scene)
+// RENDER (reduced glow on ball by ~70% and 500-box glow)
 ////////////////////
 function render(){
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
   ctx.clearRect(0,0,W,H);
 
-  // pegs (soft)
+  // pegs
   for (let o of obstacles){
     ctx.beginPath();
-    ctx.fillStyle = 'rgba(255,255,255,0.14)';
+    ctx.fillStyle = 'rgba(255,255,255,0.12)';
     ctx.arc(o.x, o.y, o.r, 0, Math.PI*2);
     ctx.fill();
   }
 
-  // bins
+  // bins (square)
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
-    ctx.fillStyle = 'rgba(255,255,255,0.03)';
-    ctx.fillRect(b.x, b.y, b.w, b.h);
-    ctx.fillStyle = 'rgba(255,255,255,0.78)';
-    ctx.font = '700 13px Inter, system-ui';
+    // glow for 500 bins (slight)
+    if (payouts[i] === 500){
+      ctx.save();
+      ctx.shadowColor = 'rgba(153,69,255,0.25)';
+      ctx.shadowBlur = 18;
+      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+      ctx.restore();
+    } else {
+      ctx.fillStyle = 'rgba(255,255,255,0.03)';
+      ctx.fillRect(b.x, b.y, b.w, b.h);
+    }
+    ctx.fillStyle = 'rgba(255,255,255,0.8)';
+    ctx.font = '700 12px Inter, system-ui';
     ctx.textAlign = 'center';
-    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 6);
+    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 5);
   }
 
-  // separators
+  // separators (visual grid lines between squares)
   ctx.strokeStyle = 'rgba(255,255,255,0.04)';
   ctx.lineWidth = 1;
   ctx.beginPath();
-  for (let i = 1; i < bins.length; i++){
-    const bx = bins[0].x + i * (bins[0].w + 6);
-    ctx.moveTo(bx, bins[0].y);
-    ctx.lineTo(bx, H);
+  if (bins.length > 0){
+    for (let i = 1; i < bins.length; i++){
+      const bx = bins[0].x + i * (bins[0].w + ((canvas.clientWidth - bins[bins.length-1].x - bins[bins.length-1].w) - bins[0].x) / (bins.length - 1));
+      ctx.moveTo(bx, bins[0].y);
+      ctx.lineTo(bx, H);
+    }
   }
   ctx.stroke();
 
-  // balls with Solana glow (radial gradient purple -> teal)
+  // balls with reduced glow (~70% less)
   for (let b of ballsInFlight){
-    // draw glow
-    const grad = ctx.createRadialGradient(b.x, b.y, b.r * 0.2, b.x, b.y, b.r * 6);
-    grad.addColorStop(0, 'rgba(153,69,255,0.95)'); // purple start
-    grad.addColorStop(0.35, 'rgba(153,69,255,0.5)');
-    grad.addColorStop(0.6, 'rgba(10,189,227,0.3)'); // teal
+    // smaller glow radius + lower alpha to reduce intensity
+    const glowR = b.r * 2;         // reduced from ~6x to ~2x
+    const grad = ctx.createRadialGradient(b.x, b.y, b.r*0.25, b.x, b.y, glowR);
+    grad.addColorStop(0, 'rgba(153,69,255,0.7)'); // purple core
+    grad.addColorStop(0.45, 'rgba(153,69,255,0.25)');
+    grad.addColorStop(0.8, 'rgba(10,189,227,0.18)'); // teal outer
     grad.addColorStop(1, 'rgba(10,189,227,0)');
     ctx.beginPath();
     ctx.fillStyle = grad;
-    ctx.arc(b.x, b.y, b.r * 6, 0, Math.PI*2);
+    ctx.arc(b.x, b.y, glowR, 0, Math.PI*2);
     ctx.fill();
 
     // shadow
     ctx.beginPath();
-    ctx.fillStyle = 'rgba(0,0,0,0.25)';
-    ctx.arc(b.x + 2.5, b.y + 3.5, b.r + 2.2, 0, Math.PI*2);
+    ctx.fillStyle = 'rgba(0,0,0,0.20)';
+    ctx.arc(b.x + 2, b.y + 3, b.r + 1.8, 0, Math.PI*2);
     ctx.fill();
 
     // ball core
@@ -272,32 +282,27 @@ function render(){
 }
 
 ////////////////////
-// CONFETTI effect (canvas overlay using many particles)
+// CONFETTI (same as before)
 ////////////////////
 function startConfetti() {
-  // spawn many particles across the canvas area
   const W = canvas.getBoundingClientRect().width;
-  const H = canvas.getBoundingClientRect().height;
-  const count = 120;
+  const count = 140;
   for (let i = 0; i < count; i++) {
     const p = {
       x: canvas.getBoundingClientRect().left + Math.random() * W,
       y: canvas.getBoundingClientRect().top + Math.random() * 40,
       vx: (Math.random() - 0.5) * 600,
-      vy: 200 + Math.random() * 300,
+      vy: 200 + Math.random() * 380,
       size: 6 + Math.random() * 8,
-      life: 1200 + Math.random() * 1200,
+      life: 1300 + Math.random() * 1400,
       color: (Math.random() < 0.5) ? '#9945FF' : '#14F195',
       born: performance.now()
     };
     confettiParticles.push(p);
   }
-  // start DOM animation loop for confetti overlay
   requestAnimationFrame(drawConfetti);
 }
-
 function drawConfetti(now){
-  // create overlay canvas if not exists
   let overlay = document.getElementById('confettiOverlay');
   if (!overlay) {
     overlay = document.createElement('canvas');
@@ -318,24 +323,20 @@ function drawConfetti(now){
   octx.setTransform(ratio,0,0,ratio,0,0);
   octx.clearRect(0,0,window.innerWidth,window.innerHeight);
 
-  const TTL = 2500;
   confettiParticles = confettiParticles.filter(p => (now - p.born) < p.life);
   for (let p of confettiParticles) {
     p.x += p.vx * (1/60);
     p.y += p.vy * (1/60);
-    p.vy += 800 * (1/60); // gravity on confetti
+    p.vy += 900 * (1/60);
     octx.fillStyle = p.color;
     octx.fillRect(p.x, p.y, p.size, p.size * 0.6);
   }
   if (confettiParticles.length > 0) requestAnimationFrame(drawConfetti);
-  else {
-    // cleanup overlay after a short delay
-    setTimeout(()=> { const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
-  }
+  else setTimeout(()=> { const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
 }
 
 ////////////////////
-// PHYSICS loop
+// PHYSICS LOOP + 1/1000 post-processing for 500-bins
 ////////////////////
 let lastTime = null;
 function step(now){
@@ -351,9 +352,9 @@ function step(now){
     const b = ballsInFlight[bi];
     if (!b.alive) { ballsInFlight.splice(bi,1); continue; }
 
-    // center bias acceleration toward center (makes edges rarer)
+    // center bias acceleration -> reduces edge hits
     const dxCenter = (centerX - b.x);
-    const axCenter = dxCenter * centerBias * 0.001; // scale down: px * bias -> px/s^2
+    const axCenter = dxCenter * centerBias * 0.001;
     b.vx += axCenter * dt;
 
     // integrate gravity and friction
@@ -374,7 +375,7 @@ function step(now){
       b.vx = -Math.abs(b.vx) * restitution;
     }
 
-    // obstacles collisions
+    // obstacle collisions
     for (let oi = 0; oi < obstacles.length; oi++){
       const obs = obstacles[oi];
       if (collidingCircleCircle(b, obs)){
@@ -382,28 +383,43 @@ function step(now){
       }
     }
 
-    // bottom -> bin detection
+    // bottom detection -> bin
     const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
     if (b.y + b.r >= bottomTrigger){
-      // map relative to binsLeft / availableWidth
+      // determine raw physics bin (based on x within bins region)
       const binsLeft = bins[0] ? bins[0].x : 8;
-      const availableWidth = (bins[bins.length-1].x + bins[bins.length-1].w) - binsLeft;
+      // compute available width as last.right - first.left
+      const lastRight = bins[bins.length-1].x + bins[bins.length-1].w;
+      const availableWidth = lastRight - binsLeft;
       let relX = (b.x - binsLeft) / availableWidth;
       relX = Math.max(0, Math.min(0.9999, relX));
-      let binIndex = Math.floor(relX * binsCount);
-      binIndex = Math.max(0, Math.min(binsCount - 1, binIndex));
-      const reward = payouts[binIndex] || 0;
-      coins += reward;
+      let rawBinIndex = Math.floor(relX * binsCount);
+      rawBinIndex = Math.max(0, Math.min(binsCount - 1, rawBinIndex));
+      let finalBin = rawBinIndex;
 
-      // play land sound; bigger sound for big reward
-      playLandSound(reward >= 100 ? true : false);
-
-      // confetti & special on 500 bins
-      if (reward === 500) {
-        startConfetti();
+      // If ball landed in an EDGE 500 bin -> accept with EDGE_ACCEPT_PROB else remap inward
+      if (payouts[rawBinIndex] === 500) {
+        if (Math.random() < EDGE_ACCEPT_PROB) {
+          finalBin = rawBinIndex; // accept rare jackpot
+        } else {
+          // remap: pick nearest non-500 bin moving inward.
+          // if left edge -> pick index 1; if right edge -> pick last-1
+          if (rawBinIndex === 0) finalBin = 1;
+          else if (rawBinIndex === binsCount - 1) finalBin = binsCount - 2;
+          else finalBin = rawBinIndex; // fallback (shouldn't happen)
+        }
       }
 
-      // spawn floating reward
+      const reward = payouts[finalBin] || 0;
+      coins += reward;
+
+      // play sound: big for >=100 or 500
+      playLandSound(reward >= 100 ? true : false);
+
+      // confetti for accepted 500 (only when finalBin is 500)
+      if (reward === 500) startConfetti();
+
+      // small floating +X
       spawnFloatingReward(b.x, bottomTrigger - 18, `+${reward}`);
 
       ballsInFlight.splice(bi, 1);
@@ -417,7 +433,7 @@ function step(now){
 }
 
 ////////////////////
-// spawn floating reward (non-modal)
+// spawn reward animation
 ////////////////////
 function spawnFloatingReward(x, y, text){
   const el = document.createElement('div');
@@ -446,7 +462,7 @@ function spawnFloatingReward(x, y, text){
 }
 
 ////////////////////
-// spawn ball
+// drop ball
 ////////////////////
 function dropBall(){
   if (balls <= 0){
@@ -457,14 +473,14 @@ function dropBall(){
   updateUI();
   const W = canvas.clientWidth;
   const startX = W * 0.5 + (Math.random() - 0.5) * 18;
-  const startY = Math.max(20, canvas.clientHeight * 0.04);
+  const startY = Math.max(18, canvas.clientHeight * 0.04);
   const initVx = (Math.random() - 0.5) * 40;
   const initVy = 40 + Math.random() * 40;
   ballsInFlight.push({ x: startX, y: startY, vx: initVx, vy: initVy, r: ballRadius, alive: true });
 }
 
 ////////////////////
-// regen logic and UI helpers
+// regen and UI
 ////////////////////
 function startRegen(){
   const now = Date.now();
@@ -490,7 +506,7 @@ function startRegen(){
 }
 
 ////////////////////
-// modal & leaderboard (unchanged)
+// modal & leaderboard
 ////////////////////
 function showModal(html){ dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
 function hideModal(){ dom.modal.classList.add('hidden'); }
@@ -510,9 +526,9 @@ function renderLeaderboard(){
 }
 
 ////////////////////
-// events binding
+// events
 ////////////////////
-document.getElementById('dropBtn').addEventListener('click', () => { dropBall(); if (!audioCtx) { /* touch to enable audio on mobile */ }});
+document.getElementById('dropBtn').addEventListener('click', () => { dropBall(); });
 document.getElementById('openLeaderboard').addEventListener('click', ()=> showScreen('leaderboard'));
 document.getElementById('backFromLeaderboard').addEventListener('click', ()=> showScreen('plinko'));
 document.getElementById('backFromLoot').addEventListener('click', ()=> showScreen('plinko'));
@@ -539,7 +555,7 @@ function showScreen(k){
 }
 
 ////////////////////
-// INIT
+// init
 ////////////////////
 let loopStarted = false;
 function init(){
