@@ -1,37 +1,53 @@
 <!doctype html>
 <html lang="en">
 <head>
-  <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>Solana City — Tap Game</title>
+  <meta charset="utf-8"/>
+  <!-- Prevent double-tap/pinch zoom -->
+  <meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover" />
+  <title>Solana City — Plinko</title>
 
   <!-- Telegram WebApp SDK -->
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 
-  <!-- Firebase (optional). Only include if you plan to use Firebase leaderboard -->
+  <!-- Firebase optional (uncomment if using) -->
   <!--
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.23.0/firebase-database-compat.js"></script>
   -->
 
   <link rel="stylesheet" href="style.css" />
+  <style>
+    /* ensure touch-action to avoid double-tap zoom on some devices */
+    html,body { touch-action: manipulation; -ms-touch-action: manipulation; }
+  </style>
 </head>
 <body>
   <div id="app" class="app">
     <header class="header">
       <div>
-        <div class="sub">Solana City • Winter</div>
-        <h1 class="title">Tap to earn Solana gifts</h1>
+        <div class="sub">Solana City • Winter — Plinko</div>
+        <h1 class="title">Drop a ball — win Solana gifts</h1>
       </div>
       <div class="balance" id="balance">0 SOLX</div>
     </header>
 
     <main class="main">
-      <!-- screens container -->
-      <section id="screen-tap" class="screen active">
-        <div class="coin-area">
-          <button id="coinBtn" class="coin-btn" aria-label="Tap coin">🪙</button>
-          <div class="coins-count" id="coinsCount">0 SOLX</div>
+      <!-- Tap/Drop screen -->
+      <section id="screen-plinko" class="screen active">
+        <div class="top-info">
+          <div class="balls-info">Balls: <span id="ballsCount">100</span>/100</div>
+          <div class="regen-info">Next in: <span id="regenTimer">60s</span></div>
+        </div>
+
+        <div class="board-area">
+          <div id="plinkoBoard" class="plinko-board" aria-hidden="false">
+            <!-- pegs & bins are rendered by JS -->
+          </div>
+
+          <div class="drop-area">
+            <button id="dropBtn" class="coin-btn" aria-label="Drop a ball">🪙</button>
+            <div class="coins-count" id="coinsCount">0 SOLX</div>
+          </div>
         </div>
 
         <div class="controls">
@@ -42,6 +58,7 @@
         <div class="chad-placeholder">Chad Santa — art placeholder</div>
       </section>
 
+      <!-- Leaderboard -->
       <section id="screen-leaderboard" class="screen">
         <div class="panel">
           <h2>Top Earners in Solana City</h2>
@@ -52,6 +69,7 @@
         </div>
       </section>
 
+      <!-- Loot -->
       <section id="screen-loot" class="screen">
         <div class="panel">
           <h2>Market Lootboxes</h2>
@@ -60,25 +78,26 @@
               <div class="loot-tier">Common</div>
               <div class="loot-emoji">🎁</div>
               <div class="loot-desc">Small coin rewards</div>
-              <button class="btn" data-tier="common">Open</button>
+              <button class="btn loot-open" data-tier="common">Open</button>
             </div>
             <div class="loot-card">
               <div class="loot-tier">Rare</div>
               <div class="loot-emoji">💠</div>
               <div class="loot-desc">Better coins + boosts</div>
-              <button class="btn" data-tier="rare">Open</button>
+              <button class="btn loot-open" data-tier="rare">Open</button>
             </div>
             <div class="loot-card">
               <div class="loot-tier">Legendary</div>
               <div class="loot-emoji">✨</div>
               <div class="loot-desc">Huge rewards, chance for NFT</div>
-              <button class="btn" data-tier="legend">Open</button>
+              <button class="btn loot-open" data-tier="legend">Open</button>
             </div>
           </div>
           <div class="panel-actions"><button class="btn" id="backFromLoot">← Back</button></div>
         </div>
       </section>
 
+      <!-- Referrals -->
       <section id="screen-ref" class="screen">
         <div class="panel">
           <h2>Recruit your elves</h2>
@@ -93,14 +112,13 @@
     </main>
 
     <nav class="bottom-nav">
-      <button class="nav-btn active" data-target="tap">🪙<span>Tap</span></button>
+      <button class="nav-btn active" data-target="plinko">🪙<span>Drop</span></button>
       <button class="nav-btn" data-target="leaderboard">🏆<span>Top</span></button>
       <button class="nav-btn" data-target="loot">🎁<span>Loot</span></button>
       <button class="nav-btn" data-target="ref">👥<span>Refer</span></button>
       <button class="nav-btn" id="socialBtn">⭐<span>Social</span></button>
     </nav>
 
-    <!-- simple modal for loot/open results -->
     <div id="modal" class="modal hidden">
       <div class="modal-card">
         <div id="modalContent"></div>
@@ -110,5 +128,12 @@
   </div>
 
   <script src="app.js"></script>
+
+  <script>
+    // Prevent double-click default zoom on some desktop browsers
+    document.addEventListener('dblclick', e => e.preventDefault());
+    // Also block gesturestart (iOS Safari)
+    document.addEventListener('gesturestart', e => e.preventDefault());
+  </script>
 </body>
 </html>
