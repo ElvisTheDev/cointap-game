@@ -1,31 +1,30 @@
-/* app.js — referral auto-award on open; startapp=ref_<id> parsing; ref link filled with user id */
+/* app.js — physics funnels to middle (no payout remap), referral auto-award, boosters, Top100, Earn UI */
 
 const BOT_USERNAME = 'your_bot'; // <-- CHANGE to your bot username (without @), e.g. 'solmas_plinko_bot'
 
-const payouts = [100,50,20,10,5,1,1,5,10,20,50,100]; // unchanged from last step
+/* -------- Game config -------- */
+const payouts = [100,50,20,10,5,1,1,5,10,20,50,100]; // 12 bins
 const binsCount = payouts.length;
 
 const BASE_MAX_BALLS = 100;
 const BOOST_MAX_BALLS = 500;
 
+/* Physics tuned for middle bias */
 const ballRadius = 4;
 const obstacleRadius = 4;
-const gravity = 1200;
-const restitution = 0.72;
-const friction = 0.995;
+const gravity = 1400;      // faster drop -> less lateral drift
+const restitution = 0.60;  // softer bounce
+const friction = 0.985;    // more damping
+let centerBias = 12.0;     // strong center attraction field
 
+/* Regen / boosts */
 const BASE_REGEN_SECONDS = 60;
-const SPEEDSTER_MULTIPLIER = 0.5;
+const SPEEDSTER_MULTIPLIER = 0.5; // 2x faster regen
 
-const centerBias = 6.4;
-const EDGE_ACCEPT_PROB = 0.001;
-
-// Desired landing distribution
-const TARGET_PROBS = { 100:0.005, 50:0.01, 20:0.10, 10:0.085, 5:0.20, 1:0.60 };
-
+/* Board layout rows (triangular field already implemented upstream) */
 const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14];
 
-const BIN_CORNER = 4;
+const BIN_CORNER = 4;     // squarer boxes
 const BINS_EXTRA_DROP = 15;
 
 const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
@@ -64,6 +63,7 @@ function getTelegramUser(){
 }
 const tgUser = getTelegramUser();
 
+/* State */
 let coins = Number(localStorage.getItem('sc_coins') || 0);
 let balls = Number(localStorage.getItem('sc_balls') || BASE_MAX_BALLS);
 if (isNaN(balls)) balls = BASE_MAX_BALLS;
@@ -75,7 +75,7 @@ let bins = [];
 let ballsInFlight = [];
 let confettiParticles = [];
 
-/* ===== Boosts ===== */
+/* Boosts (Speedster, Maxi, Spender, Nuke) */
 let boosts = JSON.parse(localStorage.getItem('sc_boosts') || '{}');
 if (!boosts || typeof boosts !== 'object') boosts = {};
 function isSpeedster(){ return (boosts.speedsterUntil || 0) > Date.now(); }
@@ -86,14 +86,14 @@ function regenSeconds(){ return isSpeedster() ? BASE_REGEN_SECONDS * SPEEDSTER_M
 function maxBalls(){ return isMaxi() ? BOOST_MAX_BALLS : BASE_MAX_BALLS; }
 function saveBoosts(){ localStorage.setItem('sc_boosts', JSON.stringify(boosts)); }
 
-/* ===== Audio ===== */
+/* ------ Audio ------ */
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
 function ensureAudio(){ if (!audioCtx) audioCtx = new AudioCtx(); }
 function playHitSound(){ try{ ensureAudio(); const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.type='square'; o.frequency.setValueAtTime(880+Math.random()*80,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(0.04,t+0.004); g.gain.exponentialRampToValueAtTime(0.0001,t+0.12); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+0.14);}catch(e){} }
 function playLandSound(big=false){ try{ ensureAudio(); const t=audioCtx.currentTime,o=audioCtx.createOscillator(),g=audioCtx.createGain(); o.type='sine'; o.frequency.setValueAtTime(big?220:440,t); g.gain.setValueAtTime(0.0001,t); g.gain.exponentialRampToValueAtTime(big?0.09:0.035,t+0.008); g.gain.exponentialRampToValueAtTime(0.0001,t+(big?0.7:0.22)); o.connect(g); g.connect(audioCtx.destination); o.start(t); o.stop(t+(big?0.72:0.24)); }catch(e){} }
 
-/* ===== Persistence/UI ===== */
+/* ------ Persistence/UI ------ */
 function saveState(){
   localStorage.setItem('sc_coins', String(coins));
   localStorage.setItem('sc_balls', String(balls));
@@ -114,31 +114,27 @@ function updateUI(){
   renderBoosts();
 }
 
-/* ===== Start parameters (Telegram WebApp + URL fallback) ===== */
+/* ------ Start params & Referrals ------ */
 function getStartParam(){
-  // Telegram: initDataUnsafe.start_param (preferred)
   const fromTG = TELEGRAM?.initDataUnsafe?.start_param;
   if (fromTG) return fromTG;
-  // As a fallback (e.g. dev in browser), read ?startapp=... or ?start=...
   const sp = new URLSearchParams(window.location.search);
   return sp.get('startapp') || sp.get('start') || '';
 }
 
-/* Auto-award referral on first open with ref_<inviterId> */
+/* Auto-award invitee on first open with ref_<inviterId> */
 function handleReferralOnOpen(){
   const param = getStartParam();
   if (!param || !/^ref_/i.test(param)) return;
   const inviterId = String(param.replace(/^ref_/i, ''));
-  // Prevent self-ref and double-claim per inviter
   if (!inviterId || inviterId === tgUser.id) return;
   const claimedKey = `sc_ref_claimed_${inviterId}`;
   if (localStorage.getItem(claimedKey)) return;
 
-  // Award invitee
+  // Award invitee locally
   coins += 200;
   balls = Math.min(maxBalls(), balls + 100);
 
-  // Mark claimed and remember inviter
   localStorage.setItem('sc_inviter_id', inviterId);
   localStorage.setItem(claimedKey, '1');
 
@@ -149,17 +145,16 @@ function handleReferralOnOpen(){
 /* Fill referral link with this user’s id */
 function setReferralLink(){
   if (!dom.refLink) return;
-  // Telegram mini app deep-link uses startapp
   const code = `ref_${tgUser.id}`;
   const link = `https://t.me/${BOT_USERNAME}?startapp=${encodeURIComponent(code)}`;
   dom.refLink.value = link;
 }
 
-/* ===== Layout sizing ===== */
+/* ------ Layout sizing ------ */
 function fitCanvas(){
   const navH = 58;
   const headerH = 56;
-  const appH = window.innerHeight - navH - 11 - 0;
+  const appH = window.innerHeight - navH - 11 - 0; // menu raised + buffer
   const statsH = 72;
   const actionsH = 80;
   const canvasAvail = Math.max(260, appH - headerH - statsH - actionsH);
@@ -175,7 +170,7 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
-/* ===== Build pegs + bins ===== */
+/* ------ Build pegs + bins ------ */
 function buildObstaclesAndBins(){
   obstacles = [];
   bins = [];
@@ -207,6 +202,7 @@ function buildObstaclesAndBins(){
     lastPegY = y;
   }
 
+  // bins row
   const baseBinsTop = H - bottomReserve + 10;
   const raisedTop = lastPegY + 0.3 * (baseBinsTop - lastPegY);
   const binsTop = raisedTop + BINS_EXTRA_DROP;
@@ -225,7 +221,7 @@ function buildObstaclesAndBins(){
   }
 }
 
-/* ===== Helpers ===== */
+/* ------ Collision helpers ------ */
 function collidingCircleCircle(a,b){
   const dx = a.x - b.x, dy = a.y - b.y;
   const minR = (a.r + b.r);
@@ -241,12 +237,14 @@ function resolveCircleCollision(ball, obs){
   const vdotn = ball.vx*nx + ball.vy*ny;
   ball.vx = ball.vx - 2*vdotn*nx;
   ball.vy = ball.vy - 2*vdotn*ny;
-  ball.vx *= restitution;
-  ball.vy *= restitution;
-  ball.vx += (Math.random()-0.5)*8;
+  // slightly softer after peg hits to reduce lateral spread
+  ball.vx *= (restitution * 0.92);
+  ball.vy *= (restitution * 0.92);
+  ball.vx += (Math.random()-0.5)*6;
   playHitSound();
 }
 
+/* ------ Render ------ */
 function drawRoundedRect(x,y,w,h,r){
   ctx.beginPath();
   const rr = Math.min(r, w/2, h/2);
@@ -258,7 +256,6 @@ function drawRoundedRect(x,y,w,h,r){
   ctx.closePath();
 }
 
-/* ===== Render ===== */
 function render(){
   const W = canvas.clientWidth, H = canvas.clientHeight;
   ctx.clearRect(0,0,W,H);
@@ -271,7 +268,7 @@ function render(){
     ctx.fill();
   }
 
-  // bins
+  // bins (100s glow)
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
 
@@ -306,7 +303,7 @@ function render(){
     ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2);
   }
 
-  // balls
+  // balls (Solana glow)
   for (const bl of ballsInFlight){
     const glowR = Math.max(bl.r * 4.5, 18);
     const grad = ctx.createRadialGradient(bl.x, bl.y, bl.r*0.2, bl.x, bl.y, glowR);
@@ -324,7 +321,7 @@ function render(){
   }
 }
 
-/* ===== Confetti ===== */
+/* ------ Confetti ------ */
 function startConfetti(){
   const W = canvas.getBoundingClientRect().width;
   const count = 140;
@@ -371,7 +368,7 @@ function drawConfetti(now){
   else setTimeout(()=>{ const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
 }
 
-/* ===== Leaderboard (coins) ===== */
+/* ------ Leaderboard (coins) ------ */
 function getInitials(n){ const p=(n||'').trim().split(/\s+/); return ((p[0]||'').charAt(0)+(p[1]||'').charAt(0)).toUpperCase()||'P'; }
 function renderLeaderboard(){
   const list = document.getElementById('leaderboardList'); if (!list) return;
@@ -405,11 +402,10 @@ function renderLeaderboard(){
   });
 }
 
-/* ===== Earn (UI only; local placeholders) ===== */
+/* ------ Earn (referrals UI placeholders) ------ */
 function renderEarn(){
   if (!dom.invitedCount || !dom.earnFriendsList || !dom.inviteTopList) return;
 
-  // friends invited (placeholder list)
   const invited = JSON.parse(localStorage.getItem('sc_invited_friends') || '[]'); // [{name,username,photo_url}]
   dom.invitedCount.textContent = invited.length;
 
@@ -431,7 +427,6 @@ function renderEarn(){
     });
   }
 
-  // global top by invites (placeholder)
   const top = JSON.parse(localStorage.getItem('sc_invite_global') || '[]'); // [{name,username,invites,photo_url}]
   const topList = dom.inviteTopList;
   topList.innerHTML = '';
@@ -457,7 +452,7 @@ function renderEarn(){
   }
 }
 
-/* ===== Physics loop ===== */
+/* ------ Physics loop (no remap: pay where it lands) ------ */
 let lastTime = null;
 function step(now){
   if (!lastTime) lastTime = now;
@@ -470,22 +465,35 @@ function step(now){
     const b = ballsInFlight[i];
     if (!b.alive){ ballsInFlight.splice(i,1); continue; }
 
-    const axCenter = (centerX - b.x) * centerBias * 0.001;
+    // depth-weighted center attraction
+    const yNorm = Math.min(1, Math.max(0, (b.y / (H || 1))));
+    const centerPull = centerBias * (0.6 + 0.9 * yNorm); // grows toward bottom
+    const axCenter = (centerX - b.x) * centerPull * 0.001;
     b.vx += axCenter * dt;
 
+    // integrate motion
     b.vy += gravity * dt;
     b.vx *= Math.pow(friction, dt*60);
     b.vy *= Math.pow(friction, dt*60);
 
     b.x += b.vx * dt; b.y += b.vy * dt;
 
-    if (b.x - b.r < 4){ b.x = 4 + b.r; b.vx = Math.abs(b.vx) * restitution; }
-    if (b.x + b.r > W - 4){ b.x = W - 4 - b.r; b.vx = -Math.abs(b.vx) * restitution; }
+    // side walls — extra damping
+    if (b.x - b.r < 4){
+      b.x = 4 + b.r;
+      b.vx = Math.abs(b.vx) * (restitution * 0.6);
+    }
+    if (b.x + b.r > W - 4){
+      b.x = W - 4 - b.r;
+      b.vx = -Math.abs(b.vx) * (restitution * 0.6);
+    }
 
+    // peg collisions
     for (const obs of obstacles){
       if (collidingCircleCircle(b, obs)) resolveCircleCollision(b, obs);
     }
 
+    // landing
     const binsTop = bins.length ? bins[0].y : (H - 80);
     if (b.y + b.r >= binsTop){
       const firstLeft = bins[0].x;
@@ -495,15 +503,7 @@ function step(now){
       let idx = Math.floor(relX * binsCount);
       idx = Math.max(0, Math.min(binsCount-1, idx));
 
-      const chosenPayout = weightedPick(TARGET_PROBS);
-      const nearestIdx = nearestBinIndexForPayout(idx, chosenPayout);
-      let finalIdx = (nearestIdx != null) ? nearestIdx : idx;
-
-      if (payouts[finalIdx] === 100 && Math.random() >= TARGET_PROBS[100]) {
-        if (finalIdx === 0) finalIdx = 1;
-        else if (finalIdx === binsCount-1) finalIdx = binsCount-2;
-      }
-
+      const finalIdx = idx; // physics-decided — no remap
       const reward = payouts[finalIdx] || 0;
       coins += reward;
       playLandSound(reward >= 50);
@@ -518,28 +518,7 @@ function step(now){
   requestAnimationFrame(step);
 }
 
-function weightedPick(map){
-  let total = 0, r = Math.random();
-  for (const k in map) total += map[k];
-  let acc = 0;
-  for (const k in map){
-    acc += map[k] / total;
-    if (r <= acc) return Number(k);
-  }
-  return Number(Object.keys(map).pop());
-}
-function nearestBinIndexForPayout(aroundIdx, payout){
-  const indices = [];
-  for (let i=0;i<payouts.length;i++) if (payouts[i] === payout) indices.push(i);
-  if (!indices.length) return null;
-  let best = indices[0], bestDist = Math.abs(indices[0]-aroundIdx);
-  for (let i=1;i<indices.length;i++){
-    const d = Math.abs(indices[i]-aroundIdx);
-    if (d < bestDist){ best = indices[i]; bestDist = d; }
-  }
-  return best;
-}
-
+/* Floating reward pop */
 function spawnFloatingReward(x,y,text){
   const el = document.createElement('div');
   el.textContent = text;
@@ -557,7 +536,7 @@ function spawnFloatingReward(x,y,text){
   setTimeout(()=> el.remove(), 950);
 }
 
-/* ===== Gameplay (Nuke aware) ===== */
+/* ------ Gameplay (Nuke aware) ------ */
 function dropBall(){
   if (balls <= 0){ showModal('<div style="font-weight:700">No balls left — wait for regen</div>'); return; }
   const W = canvas.clientWidth;
@@ -566,15 +545,15 @@ function dropBall(){
   balls -= canDrop;
   updateUI();
   for (let i=0;i<canDrop;i++){
-    const startX = W * 0.5 + (Math.random() - 0.5) * 24;
-    const startY = Math.max(18, canvas.clientHeight * 0.04);
-    const initVx = (Math.random() - 0.5) * 40;
-    const initVy = 40 + Math.random() * 40;
+    const startX = W * 0.5 + (Math.random() - 0.5) * 8;  // tight central spawn
+    const startY = Math.max(18, canvas.clientHeight * 0.03);
+    const initVx = (Math.random() - 0.5) * 12;          // little lateral
+    const initVy = 28 + Math.random() * 26;
     ballsInFlight.push({ x:startX, y:startY, vx:initVx, vy:initVy, r:ballRadius, alive:true });
   }
 }
 
-/* ===== Boosts ===== */
+/* ------ Boosts UI ------ */
 function msToHMS(ms){ const s=Math.max(0,Math.floor(ms/1000)); const h=Math.floor(s/3600), m=Math.floor((s%3600)/60), ss=s%60; return `${h}h ${m}m ${ss}s`; }
 
 function renderBoosts(){
@@ -608,7 +587,7 @@ function buyMaxi(cost){ if (coins < cost) return; coins -= cost; boosts.maxiUnti
 function buySpender(cost){ if (coins < cost) return; coins -= cost; balls = Math.min(maxBalls(), balls + 100); updateUI(); showModal('<div style="font-weight:800;font-size:16px">🪙 +100 balls added!</div>'); }
 function buyNuke(cost){ if (coins < cost) return; coins -= cost; boosts.nukeUntil = Date.now() + 24*3600*1000; updateUI(); showModal('<div style="font-weight:800;font-size:16px">💥 Nuke activated: 10 balls per tap for 24h!</div>'); }
 
-/* ===== Regen ===== */
+/* ------ Regen ------ */
 function startRegen(){
   if (balls > maxBalls()) balls = maxBalls();
   const now = Date.now();
@@ -635,7 +614,7 @@ function startRegen(){
   }, regenSeconds() * 1000);
 }
 
-/* ===== Modal & Nav ===== */
+/* ------ Modal & Nav ------ */
 function showModal(html){ if (!dom.modal) return; dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
 function hideModal(){ dom.modal?.classList.add('hidden'); }
 
@@ -651,7 +630,7 @@ function showScreen(k){
   if (k==='earn') renderEarn();
 }
 
-/* ===== Theme / Buttons ===== */
+/* ------ Theme / Buttons ------ */
 function initTheme(){
   Object.assign(document.body.style,{
     background:'radial-gradient(1200px 700px at 80% -10%, rgba(20,241,149,0.12), rgba(0,0,0,0)),radial-gradient(900px 500px at 0% 120%, rgba(153,69,255,0.14), rgba(0,0,0,0)),linear-gradient(180deg, #0b0b12 0%, #05060a 100%)',
@@ -673,7 +652,7 @@ function stylePrimary(btn){
   btn.style.textShadow='0 0 2px #000, 0 0 2px #000';
 }
 
-/* ===== Events & Init ===== */
+/* ------ Events & Init ------ */
 dom.copyRef && dom.copyRef.addEventListener('click', async ()=>{
   if (!dom.refLink) return;
   try{ await navigator.clipboard.writeText(dom.refLink.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
@@ -688,8 +667,8 @@ function init(){
   initTheme();
   fitCanvas();
   buildObstaclesAndBins();
-  setReferralLink();           // fill link
-  handleReferralOnOpen();      // auto-award if opened via ref
+  setReferralLink();
+  handleReferralOnOpen();
   if (balls > maxBalls()) balls = maxBalls();
   updateUI();
   renderLeaderboard();
