@@ -1,55 +1,29 @@
-/* app.js - Pixel-perfect triangular Plinko (top 10 rows extracted from uploaded image)
-   - Uses exact peg positions (normalized percentages) derived from your uploaded image
-   - Ball radius = 4px, obstacle radius = 6px
-   - 10 bins with payouts [100,50,20,5,1,1,5,20,50,100]
+/* app.js - Centered pyramid peg placement (same rows/counts preserved)
+   - Rows: [3,4,5,6,7,8,9,10,11,12]
+   - Ball r = 4px, Peg r = 6px
+   - Physics: gravity, restitution, friction, circle collisions
+   - Pixel-friendly, responsive, and centered in the mini app
 */
 
 /* CONFIG */
 const payouts = [100,50,20,5,1,1,5,20,50,100];
 const binsCount = payouts.length;
-const ballRadius = 4;        // px (reduced)
-const obstacleRadius = 6;    // px (reduced)
+const ballRadius = 4;        // px
+const obstacleRadius = 6;    // px
 const gravity = 1200;        // px/s^2
 const restitution = 0.72;
 const friction = 0.995;
 const maxBalls = 100;
 const regenSeconds = 60;
 
-/* Exact peg positions normalized (x = 0..1, y = 0..1) - top 10 rows extracted from your image */
-const pegRowsNormalized = [
-  // Row 1 (3 pegs)
-  [ {x:0.500, y:0.042}, {x:0.429, y:0.042}, {x:0.571, y:0.042} ],
-  // Row 2 (4 pegs)
-  [ {x:0.375, y:0.096}, {x:0.500, y:0.096}, {x:0.625, y:0.096}, {x:0.250, y:0.096} ].sort((a,b)=>a.x-b.x),
-  // Row 3 (5 pegs)
-  [ {x:0.214, y:0.158}, {x:0.321, y:0.158}, {x:0.429, y:0.158}, {x:0.536, y:0.158}, {x:0.643, y:0.158} ],
-  // Row 4 (6)
-  [ {x:0.167, y:0.210}, {x:0.283, y:0.210}, {x:0.389, y:0.210}, {x:0.500, y:0.210}, {x:0.607, y:0.210}, {x:0.721, y:0.210} ],
-  // Row 5 (7)
-  [ {x:0.143, y:0.266}, {x:0.235, y:0.266}, {x:0.321, y:0.266}, {x:0.429, y:0.266}, {x:0.536, y:0.266}, {x:0.643, y:0.266}, {x:0.750, y:0.266} ],
-  // Row 6 (8)
-  [ {x:0.120, y:0.312}, {x:0.210, y:0.312}, {x:0.295, y:0.312}, {x:0.380, y:0.312}, {x:0.465, y:0.312}, {x:0.550, y:0.312}, {x:0.635, y:0.312}, {x:0.720, y:0.312} ],
-  // Row 7 (9)
-  [ {x:0.100, y:0.360}, {x:0.180, y:0.360}, {x:0.260, y:0.360}, {x:0.340, y:0.360}, {x:0.420, y:0.360}, {x:0.500, y:0.360}, {x:0.580, y:0.360}, {x:0.660, y:0.360}, {x:0.740, y:0.360} ],
-  // Row 8 (10)
-  [ {x:0.085, y:0.410}, {x:0.165, y:0.410}, {x:0.245, y:0.410}, {x:0.325, y:0.410}, {x:0.405, y:0.410}, {x:0.485, y:0.410}, {x:0.565, y:0.410}, {x:0.645, y:0.410}, {x:0.725, y:0.410}, {x:0.805, y:0.410} ],
-  // Row 9 (11)
-  [ {x:0.075, y:0.460}, {x:0.15, y:0.460}, {x:0.225, y:0.460}, {x:0.30, y:0.460}, {x:0.375, y:0.460}, {x:0.45, y:0.460}, {x:0.525, y:0.460}, {x:0.6, y:0.460}, {x:0.675, y:0.460}, {x:0.75, y:0.460}, {x:0.825, y:0.460} ],
-  // Row 10 (12)
-  [ {x:0.067, y:0.510}, {x:0.137, y:0.510}, {x:0.207, y:0.510}, {x:0.277, y:0.510}, {x:0.347, y:0.510}, {x:0.417, y:0.510}, {x:0.487, y:0.510}, {x:0.557, y:0.510}, {x:0.627, y:0.510}, {x:0.697, y:0.510}, {x:0.767, y:0.510}, {x:0.837, y:0.510} ]
-];
+/* Peg counts per row (top -> bottom). Keeps same totals as before. */
+const obstacleRows = [3,4,5,6,7,8,9,10,11,12]; // 10 rows
 
-/* NOTE:
-   The x,y values above are normalized fractions of the original image width/height,
-   and were derived from the uploaded image processing. They are rounded and slightly
-   adjusted to ensure consistent spacing and aesthetics on arbitrary canvas sizes.
-*/
-
-/* TELEGRAM init */
+/* TELEGRAM init (safe no-op outside Telegram) */
 const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 if (TELEGRAM) { try { TELEGRAM.ready(); } catch(e) {} }
 
-/* DOM & canvas */
+/* DOM */
 const canvas = document.getElementById('plinkoCanvas');
 const ctx = canvas.getContext('2d');
 const dom = {
@@ -58,6 +32,8 @@ const dom = {
   dropBtn: document.getElementById('dropBtn'),
   coinsCount: document.getElementById('coinsCount'),
   balance: document.getElementById('balance'),
+  openLoot: document.getElementById('openLoot'),
+  openLeaderboard: document.getElementById('openLeaderboard'),
   leaderboardList: document.getElementById('leaderboardList'),
   modal: document.getElementById('modal'),
   modalContent: document.getElementById('modalContent'),
@@ -71,12 +47,12 @@ if (isNaN(balls)) balls = maxBalls;
 let lastRegen = Number(localStorage.getItem('sc_lastRegen') || Date.now());
 let regenInterval = null, regenCountdownInterval = null;
 
-let obstacles = [];   // will store pegs as actual pixel positions {x,y,r}
-let bins = [];        // pixel bins {x,y,w,h,i}
-let ballsInFlight = []; // list of active balls
+let obstacles = [];   // {x,y,r}
+let bins = [];        // {x,y,w,h,i}
+let ballsInFlight = []; // {x,y,vx,vy,r,alive}
 let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) ? TELEGRAM.initDataUnsafe.user : { id: 'local_'+Math.floor(Math.random()*99999), first_name: 'You' };
 
-/* helpers */
+/* Persistence helpers */
 function saveState(){
   localStorage.setItem('sc_coins', String(coins));
   localStorage.setItem('sc_balls', String(balls));
@@ -87,6 +63,8 @@ function saveScoreLocal(){
   s[user.id] = { name: user.first_name || 'Player', coins };
   localStorage.setItem('sc_scores', JSON.stringify(s));
 }
+
+/* UI update */
 function updateUI(){
   dom.coinsCount.textContent = `${coins} SOLX`;
   dom.balance.textContent = `${coins} SOLX`;
@@ -95,7 +73,7 @@ function updateUI(){
   saveScoreLocal();
 }
 
-/* canvas sizing for high DPI */
+/* Canvas sizing (high-DPI aware) */
 function fitCanvas(){
   const cssWidth = Math.min(window.innerWidth * 0.92, 940);
   const cssHeight = Math.max(420, window.innerHeight * 0.56);
@@ -107,35 +85,61 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
-/* convert normalized peg rows to pixel positions on current canvas */
+/* Build a centered pyramid:
+   - Uses obstacleRows counts
+   - Calculates horizontal spacing based on the widest row (bottom)
+   - Centers each row horizontally
+   - Even vertical spacing between rows
+*/
 function buildObstaclesAndBins(){
   obstacles = [];
   bins = [];
+
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
 
-  // map the normalized rows to the canvas pixel coordinates
-  for (let r = 0; r < pegRowsNormalized.length; r++){
-    const row = pegRowsNormalized[r];
-    for (let p of row){
-      // clamp to interior margins a bit
-      const marginX = Math.max(0.06 * W, 18);
-      const px = Math.max(marginX, Math.min(W - marginX, p.x * W));
-      const py = Math.max(18, Math.min(H - 120, p.y * H));
-      obstacles.push({ x: px, y: py, r: obstacleRadius });
+  const topPadding = Math.max(18, H * 0.04);
+  const bottomReserve = Math.max(84, H * 0.18);
+  const usableH = H - topPadding - bottomReserve;
+
+  // widest row (bottom) determines horizontal spacing
+  const widestCount = Math.max(...obstacleRows);
+  // leave side margins so pegs aren't at the very edges
+  const sideMargin = Math.max(0.06 * W, 24);
+  // available width for pegs
+  const availableWidth = W - sideMargin * 2;
+  // horizontal spacing between peg centers for the bottom row
+  const baseSpacing = availableWidth / (widestCount + 1); // +1 to create margin on both sides
+
+  // vertical spacing evenly across rows
+  const rowsCount = obstacleRows.length;
+  const vSpacing = usableH / (rowsCount + 1); // +1 to leave top breathing room
+
+  for (let r = 0; r < rowsCount; r++){
+    const count = obstacleRows[r];
+    // spacing for this row: keep same baseSpacing but center row so it's narrower near top
+    const rowWidth = baseSpacing * (count + 1);
+    const rowLeft = (W - rowWidth) / 2;
+    const y = topPadding + (r + 1) * vSpacing;
+
+    for (let i = 0; i < count; i++){
+      const x = rowLeft + (i + 1) * baseSpacing;
+      obstacles.push({ x, y, r: obstacleRadius });
     }
   }
 
-  // bins - allocate under the last row area across the full width
-  const binsY = canvas.clientHeight - Math.max(84, canvas.clientHeight * 0.18) + 12;
-  const binWidth = (canvas.clientWidth - 16) / binsCount;
+  // bins: center under pyramid, spanning same availableWidth as pegs
+  const binsY = H - bottomReserve + 12;
+  const binWidth = availableWidth / binsCount;
+  // left-most bin x coordinate (match pyramid centering)
+  const binsLeft = (W - availableWidth) / 2;
   for (let i = 0; i < binsCount; i++){
-    const x = 8 + i * binWidth;
-    bins.push({ x, y: binsY, w: binWidth - 6, h: Math.max(60, canvas.clientHeight * 0.12), i });
+    const x = binsLeft + i * binWidth;
+    bins.push({ x, y: binsY, w: Math.max(24, binWidth - 6), h: Math.max(60, bottomReserve - 24), i });
   }
 }
 
-/* collision helpers */
+/* Collision helpers */
 function collidingCircleCircle(a, b){
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -159,7 +163,7 @@ function resolveCircleCollision(ball, obs){
   ball.vx += (Math.random() - 0.5) * 12;
 }
 
-/* physics loop */
+/* Physics loop */
 let lastTime = null;
 function step(now){
   if (!lastTime) lastTime = now;
@@ -177,7 +181,7 @@ function step(now){
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    // walls
+    // left/right wall collisions
     const W = canvas.clientWidth;
     if (b.x - b.r < 4){
       b.x = 4 + b.r;
@@ -188,7 +192,7 @@ function step(now){
       b.vx = -Math.abs(b.vx) * restitution;
     }
 
-    // obstacle collisions
+    // obstacles collisions
     for (let oi = 0; oi < obstacles.length; oi++){
       const obs = obstacles[oi];
       if (collidingCircleCircle(b, obs)){
@@ -196,20 +200,24 @@ function step(now){
       }
     }
 
-    // bottom -> bin detection
+    // bottom detection -> bin
     const H = canvas.clientHeight;
     const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
     if (b.y + b.r >= bottomTrigger){
       const W2 = canvas.clientWidth;
-      let binIndex = Math.floor((b.x / W2) * binsCount);
+      // map to bins with the same centered availableWidth
+      const binsLeft = bins[0] ? bins[0].x : 8;
+      const availableWidth = (bins[bins.length-1].x + bins[bins.length-1].w) - binsLeft;
+      let relX = (b.x - binsLeft) / availableWidth;
+      relX = Math.max(0, Math.min(0.9999, relX));
+      let binIndex = Math.floor(relX * binsCount);
       binIndex = Math.max(0, Math.min(binsCount - 1, binIndex));
       const reward = payouts[binIndex] || 0;
       coins += reward;
 
-      // floating +X (non-modal)
+      // floating +X animation
       spawnFloatingReward(b.x, bottomTrigger - 18, `+${reward}`);
 
-      // remove ball
       ballsInFlight.splice(bi, 1);
       updateUI();
       continue;
@@ -220,7 +228,7 @@ function step(now){
   requestAnimationFrame(step);
 }
 
-/* render */
+/* Render everything */
 function render(){
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
@@ -239,7 +247,7 @@ function render(){
     ctx.stroke();
   }
 
-  // bins
+  // bins (centered)
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
     ctx.fillStyle = 'rgba(255,255,255,0.03)';
@@ -255,18 +263,21 @@ function render(){
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let i = 1; i < bins.length; i++){
-    const bx = bins[0].x + i * (bins[0].w + 6) - 3;
-    ctx.moveTo(bx, bins[0].y);
+    const prev = bins[0];
+    const bx = prev.x + i * (prev.w + 6);
+    ctx.moveTo(bx, prev.y);
     ctx.lineTo(bx, H);
   }
   ctx.stroke();
 
   // balls
   for (let b of ballsInFlight){
+    // shadow
     ctx.beginPath();
     ctx.fillStyle = 'rgba(0,0,0,0.25)';
     ctx.arc(b.x + 2.5, b.y + 3.5, b.r + 2.2, 0, Math.PI*2);
     ctx.fill();
+    // ball
     ctx.beginPath();
     ctx.fillStyle = '#fff';
     ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
@@ -301,7 +312,7 @@ function spawnFloatingReward(x, y, text){
   setTimeout(()=> el.remove(), 950);
 }
 
-/* drop ball */
+/* spawn ball */
 function dropBall(){
   if (balls <= 0){
     showModal('<div style="font-weight:700">No balls left — wait for regen</div>');
@@ -341,7 +352,7 @@ function startRegen(){
   }, regenSeconds * 1000);
 }
 
-/* modal and leaderboard */
+/* modal & leaderboard */
 function showModal(html){ dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
 function hideModal(){ dom.modal.classList.add('hidden'); }
 
@@ -359,7 +370,7 @@ function renderLeaderboard(){
   });
 }
 
-/* events binding */
+/* events */
 document.getElementById('dropBtn').addEventListener('click', dropBall);
 document.getElementById('openLeaderboard').addEventListener('click', ()=> showScreen('leaderboard'));
 document.getElementById('backFromLeaderboard').addEventListener('click', ()=> showScreen('plinko'));
