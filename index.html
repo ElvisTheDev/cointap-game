@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>SOLMAS</title>
+  <title>SOLMAS Plinko</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
   <meta name="format-detection" content="telephone=no" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -20,7 +20,7 @@
       --sol-teal: #0ABDE3;
       --radius-lg: 16px;
       --radius-md: 12px;
-      --nav-h: 58px; /* more compact */
+      --nav-h: 58px;
       --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
     *{ box-sizing:border-box; -webkit-tap-highlight-color:transparent; }
@@ -38,7 +38,7 @@
       touch-action:manipulation;
     }
     .app{
-      height: calc(100vh - var(--nav-h) - var(--safe-bottom) - 6px); /* room for raised menu */
+      height: calc(100vh - var(--nav-h) - var(--safe-bottom) - 6px);
       max-width:980px; margin:0 auto; padding:10px 12px;
       display:flex; flex-direction:column; gap:8px; overflow:hidden;
     }
@@ -47,8 +47,17 @@
     #subtitleText{ font-size:12px; color:var(--fg-soft); }
 
     .screens{ flex:1 1 auto; min-height:0; display:grid; }
-    .screen{ display:none; grid-template-rows:auto 1fr auto; min-height:0; }
+    .screen{
+      display:none; grid-template-rows:auto 1fr auto; min-height:0;
+      overflow:hidden; /* default: no scroll per screen */
+    }
     .screen.active{ display:grid; }
+
+    /* Make only the Boost screen scrollable */
+    #screen-boost{
+      overflow:auto;
+      -webkit-overflow-scrolling: touch;
+    }
 
     /* PLINKO layout */
     .plinko-wrap{ display:grid; grid-template-rows:auto 1fr auto; gap:8px; min-height:0; }
@@ -95,7 +104,7 @@
       flex:1 1 0; min-width:0;
       background:transparent; border:0; color:#fff; font-weight:800;
       border-radius:10px; padding:8px 6px;
-      font-size:clamp(9px, 2.6vw, 11px); /* smaller, responsive */
+      font-size:clamp(9px, 2.6vw, 11px);
       text-shadow:0 0 2px #000, 0 0 2px #000;
       display:inline-flex; align-items:center; justify-content:center; gap:6px;
       white-space:nowrap;
@@ -167,9 +176,9 @@
         <div id="boostList" class="pad"></div>
       </div>
 
-      <!-- ===== LEADERBOARD ===== -->
+      <!-- ===== TOP100 ===== -->
       <div id="screen-leaderboard" class="screen">
-        <h3 style="margin:6px 0 4px; font-weight:800;">Top Players</h3>
+        <h3 style="margin:6px 0 4px; font-weight:800;">Top 100</h3>
         <div id="leaderboardList" class="pad"></div>
       </div>
 
@@ -192,10 +201,10 @@
         </div>
       </div>
 
-      <!-- ===== REFERRALS ===== -->
+      <!-- ===== INVITE ===== -->
       <div id="screen-ref" class="screen">
-        <h3 style="margin:6px 0 4px; font-weight:800;">Referrals</h3>
-        <p class="muted" style="margin:0 0 6px;">Invite friends and earn rewards.</p>
+        <h3 style="margin:6px 0 4px; font-weight:800;">Invite Friends</h3>
+        <p class="muted" style="margin:0 0 6px;">Share your link to earn rewards.</p>
         <div class="statCard" style="gap:10px; width:100%;">
           <input id="refLink" value="https://t.me/your_bot?start=ref_12345" style="flex:1; background:transparent; border:0; color:#fff; outline:none;">
           <button id="copyRef" class="primary" style="min-width:100px;">Copy</button>
@@ -208,9 +217,9 @@
   <nav class="bottomNav">
     <button class="nav-btn active" data-target="plinko">🪙 Plinko</button>
     <button class="nav-btn" data-target="boost">🚀 Boost</button>
-    <button class="nav-btn" data-target="leaderboard">🏆 Leaderboard</button>
+    <button class="nav-btn" data-target="leaderboard">🏆 Top100</button>
     <button class="nav-btn" data-target="social">🌐 Social</button>
-    <button class="nav-btn" data-target="ref">💰 Referrals</button>
+    <button class="nav-btn" data-target="ref">💰 Invite</button>
   </nav>
 
   <!-- Modal -->
