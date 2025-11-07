@@ -1,18 +1,28 @@
-/* app.js - Triangular plinko with circle obstacles and physics collisions */
+/* app.js - Triangular Plinko board recreated from uploaded image
+   - obstacleRows: 3..18 (from your image)
+   - ball radius = 4px (50% smaller)
+   - obstacle radius = 6px (30% smaller)
+   - bins remain 10 (payouts unchanged)
+   - realistic circle-vs-circle collisions with restitution and friction
+   - silent coin award on landing, plus a small floating "+X" animation (non-modal)
+*/
 
-/* CONFIG */
+/* CONFIG (tweakable) */
 const payouts = [100,50,20,5,1,1,5,20,50,100]; // 10 bins (unchanged)
 const binsCount = payouts.length;
-const obstacleRows = [3,4,5,6,7,8,9,10,11]; // exactly as requested: row1=3, row2=4, ... row9=11
-const ballRadius = 8;            // px
-const obstacleRadius = 8;       // px (same visual size)
-const gravity = 1200;           // px / s^2 (feel free to tweak)
+
+// Triangular rows exactly captured from your image: row1=3, row2=4, ... row16=18
+const obstacleRows = Array.from({length:16}, (_,i) => 3 + i); // [3,4,...,18]
+
+const ballRadius = 4;            // px (50% smaller)
+const obstacleRadius = 6;       // px (~30% smaller than 8)
+const gravity = 1200;           // px / s^2
 const restitution = 0.72;       // bounce energy retention
-const friction = 0.995;         // air friction per frame (0-1)
+const friction = 0.995;         // damping factor
 const maxBalls = 100;
 const regenSeconds = 60;
 
-/* Telegram init (same as before) */
+/* Telegram init */
 const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 if (TELEGRAM) { try { TELEGRAM.ready(); } catch(e) {} }
 
@@ -40,7 +50,7 @@ if (isNaN(balls)) balls = maxBalls;
 let lastRegen = Number(localStorage.getItem('sc_lastRegen') || Date.now());
 let regenInterval = null, regenCountdownInterval = null;
 let obstacles = [];   // {x,y,r}
-let bins = [];        // bin rects
+let bins = [];        // {x,y,w,h,i}
 let ballsInFlight = []; // {x,y,vx,vy,r,alive}
 let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) ? TELEGRAM.initDataUnsafe.user : { id: 'local_'+Math.floor(Math.random()*99999), first_name: 'You' };
 
@@ -56,7 +66,7 @@ function saveScoreLocal(){
   localStorage.setItem('sc_scores', JSON.stringify(s));
 }
 
-/* UI */
+/* UI update */
 function updateUI(){
   dom.coinsCount.textContent = `${coins} SOLX`;
   dom.balance.textContent = `${coins} SOLX`;
@@ -65,10 +75,10 @@ function updateUI(){
   saveScoreLocal();
 }
 
-/* resize canvas to CSS size * devicePixelRatio */
+/* Fit canvas for high-dpi screens */
 function fitCanvas(){
-  const cssWidth = Math.min(window.innerWidth * 0.92, 720);
-  const cssHeight = Math.max(360, window.innerHeight * 0.46);
+  const cssWidth = Math.min(window.innerWidth * 0.92, 900);
+  const cssHeight = Math.max(420, window.innerHeight * 0.52);
   canvas.style.width = cssWidth + 'px';
   canvas.style.height = cssHeight + 'px';
   const ratio = window.devicePixelRatio || 1;
@@ -77,35 +87,45 @@ function fitCanvas(){
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
 
-/* Build triangular obstacle grid using obstacleRows */
+/* Build triangular obstacles and bins with equal spacing aesthetically centered */
 function buildObstaclesAndBins(){
   obstacles = [];
   bins = [];
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
-  const topPadding = 28;
-  const bottomArea = 88;
+  const topPadding = Math.max(18, H * 0.04);
+  const bottomArea = Math.max(84, H * 0.18);
   const usableH = H - topPadding - bottomArea;
 
-  // for each row create given count, center them horizontally
+  // We'll center the triangle horizontally and place rows evenly vertically.
+  // For each row with count N, place pegs at equal horizontal positions inside [margin..W-margin].
+  const horizontalMargin = Math.max(0.06 * W, 24);
+  const leftEdge = horizontalMargin;
+  const rightEdge = W - horizontalMargin;
+
   for (let r = 0; r < obstacleRows.length; r++){
     const count = obstacleRows[r];
-    const y = topPadding + (r / (obstacleRows.length - 1)) * usableH;
+    // y coordinate for this row
+    const y = topPadding + (r / Math.max(1, obstacleRows.length - 1)) * (usableH * 0.95);
+    // spread pegs across the available width but center them so the triangle apex aligns
+    // Use a shrinking width for higher rows to make triangle shape aesthetic
+    // rowWidthFactor reduces the effective row width for higher rows to produce triangular taper
+    const taper = 1 - (r / Math.max(1, obstacleRows.length - 1)) * 0.22; // small taper for elegance
+    const rowLeft = leftEdge + (1 - taper) * (W/2 - leftEdge) * 0.5;
+    const rowRight = rightEdge - (1 - taper) * (W/2 - leftEdge) * 0.5;
+
     for (let i = 0; i < count; i++){
-      // spread pegs across width but keep outer margins
-      const leftMargin = W * 0.08;
-      const rightMargin = W * 0.92;
-      const x = leftMargin + ((i + 1) / (count + 1)) * (rightMargin - leftMargin);
+      const x = rowLeft + ((i + 1) / (count + 1)) * (rowRight - rowLeft);
       obstacles.push({ x, y, r: obstacleRadius });
     }
   }
 
-  // bins: divide bottom width into binsCount equal buckets
-  const binsY = H - bottomArea + 8;
+  // bins: center them across full width under the lowest row
+  const binsY = H - bottomArea + 12;
   const binWidth = (W - 16) / binsCount;
   for (let i = 0; i < binsCount; i++){
     const x = 8 + i * binWidth;
-    bins.push({ x, y: binsY, w: binWidth - 4, h: bottomArea - 16, i });
+    bins.push({ x, y: binsY, w: binWidth - 6, h: bottomArea - 24, i });
   }
 }
 
@@ -118,48 +138,41 @@ function collidingCircleCircle(a, b){
   return dist2 < (minR * minR);
 }
 function resolveCircleCollision(ball, obs){
-  // vector from obstacle to ball
   let nx = ball.x - obs.x;
   let ny = ball.y - obs.y;
   const dist = Math.hypot(nx, ny) || 0.0001;
-  // normalize
   nx /= dist; ny /= dist;
-  // push ball out so just touching
   const overlap = (ball.r + obs.r) - dist;
   ball.x += nx * (overlap + 0.5);
   ball.y += ny * (overlap + 0.5);
-  // reflect velocity across normal
   const vdotn = ball.vx * nx + ball.vy * ny;
   ball.vx = ball.vx - 2 * vdotn * nx;
   ball.vy = ball.vy - 2 * vdotn * ny;
-  // apply restitution and small random spin
   ball.vx *= restitution;
   ball.vy *= restitution;
-  // add tiny random lateral velocity to avoid infinite loops
-  ball.vx += (Math.random() - 0.5) * 20;
+  ball.vx += (Math.random() - 0.5) * 12; // tiny random spin to avoid repeating paths
 }
 
-/* simulate step for all balls */
+/* per-frame physics step */
 let lastTime = null;
 function step(now){
   if (!lastTime) lastTime = now;
-  const dt = Math.min(0.032, (now - lastTime) / 1000); // cap dt ~32ms
+  const dt = Math.min(0.032, (now - lastTime) / 1000);
   lastTime = now;
 
-  // physics per ball
+  // update balls
   for (let bi = ballsInFlight.length - 1; bi >= 0; bi--){
     const b = ballsInFlight[bi];
     if (!b.alive) { ballsInFlight.splice(bi,1); continue; }
 
-    // integrate velocity
     b.vy += gravity * dt;
-    b.vx *= Math.pow(friction, dt*60); // friction scaled by FPS
+    b.vx *= Math.pow(friction, dt*60);
     b.vy *= Math.pow(friction, dt*60);
 
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
-    // wall collision (left/right)
+    // walls
     const W = canvas.clientWidth;
     if (b.x - b.r < 4){
       b.x = 4 + b.r;
@@ -170,7 +183,7 @@ function step(now){
       b.vx = -Math.abs(b.vx) * restitution;
     }
 
-    // obstacle collisions
+    // obstacles collisions
     for (let oi = 0; oi < obstacles.length; oi++){
       const obs = obstacles[oi];
       if (collidingCircleCircle(b, obs)){
@@ -178,82 +191,116 @@ function step(now){
       }
     }
 
-    // bottom detection: if ball.y > threshold -> compute bin and award then remove
+    // bottom -> bin detection
     const H = canvas.clientHeight;
-    const bottomTrigger = H - 96; // if ball passes this, we consider it in bins area
+    const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
     if (b.y + b.r >= bottomTrigger){
-      // map x to bin index
       const W2 = canvas.clientWidth;
       let binIndex = Math.floor((b.x / W2) * binsCount);
       binIndex = Math.max(0, Math.min(binsCount - 1, binIndex));
-      // award
       const reward = payouts[binIndex] || 0;
       coins += reward;
-      // remove ball (silent)
+
+      // small floating +X animation for reward (non-modal)
+      spawnFloatingReward(b.x, bottomTrigger - 18, `+${reward}`);
+
+      // remove ball
       ballsInFlight.splice(bi, 1);
-      // Save & update, but no modal
       updateUI();
       continue;
     }
   }
 
-  // render
   render();
-
-  // next frame
   requestAnimationFrame(step);
 }
 
-/* render function draws obstacles, bins and balls */
+/* Render obstacles, bins, and balls */
 function render(){
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
   ctx.clearRect(0,0,W,H);
 
-  // subtle background gradient already on canvas CSS; draw slight vignette
-  // draw obstacles
-  ctx.fillStyle = 'rgba(255,255,255,0.14)';
+  // draw pegs with subtle glow
   for (let o of obstacles){
     ctx.beginPath();
+    ctx.fillStyle = 'rgba(255,255,255,0.16)';
     ctx.arc(o.x, o.y, o.r, 0, Math.PI*2);
     ctx.fill();
+    // soft ring
+    ctx.beginPath();
+    ctx.strokeStyle = 'rgba(153,69,255,0.06)';
+    ctx.lineWidth = 6;
+    ctx.arc(o.x, o.y, o.r + 4, 0, Math.PI*2);
+    ctx.stroke();
   }
 
   // draw bins
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
-    // draw bin box
     ctx.fillStyle = 'rgba(255,255,255,0.03)';
     ctx.fillRect(b.x, b.y, b.w, b.h);
-    // draw payout label
-    ctx.fillStyle = 'rgba(255,255,255,0.7)';
-    ctx.font = 'bold 12px Inter, system-ui';
+    ctx.fillStyle = 'rgba(255,255,255,0.78)';
+    ctx.font = '700 13px Inter, system-ui';
     ctx.textAlign = 'center';
     ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 6);
   }
 
-  // draw balls in flight
-  for (let b of ballsInFlight){
-    ctx.beginPath();
-    ctx.fillStyle = '#fff';
-    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
-    ctx.fill();
-  }
-
-  // draw top drop indicator (optional)
-  // draw separators for bins
+  // draw dividing lines between bins
   ctx.strokeStyle = 'rgba(255,255,255,0.04)';
   ctx.lineWidth = 1;
   ctx.beginPath();
   for (let i = 1; i < bins.length; i++){
-    const bx = bins[0].x + i * (bins[0].w + 4);
+    const bx = bins[0].x + i * (bins[0].w + 6) - 3;
     ctx.moveTo(bx, bins[0].y);
     ctx.lineTo(bx, H);
   }
   ctx.stroke();
+
+  // balls
+  for (let b of ballsInFlight){
+    ctx.beginPath();
+    // small shadow
+    ctx.fillStyle = 'rgba(0,0,0,0.25)';
+    ctx.arc(b.x + 2.5, b.y + 3.5, b.r + 2.2, 0, Math.PI*2);
+    ctx.fill();
+    // ball
+    ctx.beginPath();
+    ctx.fillStyle = '#ffffff';
+    ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
+    ctx.fill();
+  }
 }
 
-/* drop a ball - spawn with initial velocity near zero */
+/* spawn a floating reward label that fades up and disappears */
+function spawnFloatingReward(x, y, text){
+  const el = document.createElement('div');
+  el.textContent = text;
+  Object.assign(el.style, {
+    position: 'fixed',
+    left: (canvas.getBoundingClientRect().left + x - 16) + 'px',
+    top: (canvas.getBoundingClientRect().top + y - 6) + 'px',
+    padding: '6px 8px',
+    background: 'linear-gradient(90deg,#14F195,#0ABDE3)',
+    color: '#000',
+    fontWeight: '800',
+    borderRadius: '8px',
+    pointerEvents: 'none',
+    zIndex: 9999,
+    transform: 'translateY(0)',
+    opacity: '1',
+  });
+  document.body.appendChild(el);
+  // animate up + fade
+  requestAnimationFrame(()=> {
+    el.style.transition = 'transform 900ms ease-out, opacity 900ms';
+    el.style.transform = 'translateY(-48px)';
+    el.style.opacity = '0';
+  });
+  setTimeout(()=> el.remove(), 950);
+}
+
+/* spawn ball */
 function dropBall(){
   if (balls <= 0) {
     showModal('<div style="font-weight:700">No balls left — wait for regen</div>');
@@ -261,16 +308,15 @@ function dropBall(){
   }
   balls -= 1;
   updateUI();
-  // spawn ball near top middle
   const W = canvas.clientWidth;
-  const startX = W * 0.5 + (Math.random() - 0.5) * 18; // small jitter
-  const startY = 24;
-  const initVx = (Math.random() - 0.5) * 80;
+  const startX = W * 0.5 + (Math.random() - 0.5) * 16;
+  const startY = Math.max(20, canvas.clientHeight * 0.04);
+  const initVx = (Math.random() - 0.5) * 40;
   const initVy = 40 + Math.random() * 40;
   ballsInFlight.push({ x: startX, y: startY, vx: initVx, vy: initVy, r: ballRadius, alive: true });
 }
 
-/* regen logic */
+/* regen + countdown */
 function startRegen(){
   const now = Date.now();
   const elapsed = Math.floor((now - lastRegen) / 1000);
@@ -294,12 +340,14 @@ function startRegen(){
   }, regenSeconds * 1000);
 }
 
-/* modal helper */
+/* modal helpers */
 function showModal(html){
   dom.modalContent.innerHTML = html;
   dom.modal.classList.remove('hidden');
 }
-function hideModal(){ dom.modal.classList.add('hidden'); }
+function hideModal(){
+  dom.modal.classList.add('hidden');
+}
 
 /* leaderboard local fallback */
 function renderLeaderboard(){
@@ -317,8 +365,8 @@ function renderLeaderboard(){
 }
 
 /* event bindings */
-document.getElementById('dropBtn').addEventListener('click', dropBall);
-document.getElementById('openLeaderboard').addEventListener('click', ()=> showScreen('leaderboard'));
+dom.dropBtn.addEventListener('click', dropBall);
+dom.openLeaderboard.addEventListener('click', ()=> showScreen('leaderboard'));
 document.getElementById('backFromLeaderboard').addEventListener('click', ()=> showScreen('plinko'));
 document.getElementById('backFromLoot').addEventListener('click', ()=> showScreen('plinko'));
 document.getElementById('backFromRef').addEventListener('click', ()=> showScreen('plinko'));
@@ -329,9 +377,7 @@ document.querySelectorAll('.loot-open').forEach(b => b.addEventListener('click',
   coins += reward; updateUI(); showModal(`<div style="font-size:18px;font-weight:800">🎉 You got ${reward} SOLX!</div>`);
 }));
 document.getElementById('copyRef').addEventListener('click', async ()=> {
-  const inp = document.getElementById('refLink');
-  try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
-  catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
+  const inp = document.getElementById('refLink'); try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); } catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
 });
 dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
 
@@ -346,15 +392,14 @@ function showScreen(k){
 }
 
 /* init */
+let fpsLoopStarted = false;
 function init(){
   fitCanvas();
   buildObstaclesAndBins();
   updateUI();
   renderLeaderboard();
   startRegen();
-
-  // start physics loop
-  requestAnimationFrame(step);
+  if (!fpsLoopStarted) { fpsLoopStarted = true; requestAnimationFrame(step); }
 }
 window.addEventListener('resize', ()=> { fitCanvas(); buildObstaclesAndBins(); });
 init();
