@@ -1,30 +1,41 @@
-/* app.js — Mobile-optimized Plinko (Telegram Mini App) with Avatar + Username Leaderboard
-   - Peg rows: 3..14 (12 rows total)
-   - Bins (12): [500,100,50,20,5,1,1,5,20,50,100,500]
-   - Square prize boxes, ≥2px gaps, 1px gradient stroke, 500-bin glow
-   - Strong Solana ball glow (purple→teal)
-   - Physics + center bias + 1/1000 acceptance for 500 edge bins
-   - Sounds on peg hit / land; confetti on 500
-   - Leaderboard shows avatar (photo_url or initials), name, @username, score
+/* app.js — SOLMAS Plinko (Telegram Mini App)
+   Aesthetics + Boosts + Mobile
+   - Galaxy background (dark Solana)
+   - Buttons: bold white text with black outline
+   - Title: "SOLMAS Plinko"; Subtitle: "Every drop is a win"
+   - Balance counter in smooth translucent boxes
+   - Rounded prize boxes, ≥2px gaps, gradient stroke, 500 glow
+   - Loot -> Boost (🚀). "Open Lootbox" -> "Boosters" (routes to Boost)
+   - Boosts:
+       ⚡️ Speedster: regen x2 for 24h (500)
+       ☄️ Maxi: max balls 500 for 24h (5000)
+       🪙 Spender: +100 balls (2500)
+   - Physics + center bias + 1/1000 edge jackpot acceptance
+   - Sounds on hits/land; confetti on 500
+   - Leaderboard shows avatar + @username + name + score
 */
 
 /* =================== CONFIG =================== */
 const payouts = [500,100,50,20,5,1,1,5,20,50,100,500]; // 12 bins
 const binsCount = payouts.length;
 
-const ballRadius = 4;         // px
-const obstacleRadius = 4;     // px
-const gravity = 1200;         // px/s^2
+const BASE_MAX_BALLS = 100;
+const BOOST_MAXI_BALLS = 500;
+
+const ballRadius = 4;
+const obstacleRadius = 4;
+const gravity = 1200;
 const restitution = 0.72;
 const friction = 0.995;
-const maxBalls = 100;
-const regenSeconds = 60;
+
+const BASE_REGEN_SECONDS = 60;     // 1 per minute
+const SPEEDSTER_MULTIPLIER = 0.5;  // x2 faster => half the seconds
 
 // physics shaping
-const centerBias = 6.4;          // pull toward center (reduces edge hits)
-const EDGE_ACCEPT_PROB = 0.001;  // 1/1000 acceptance for 500 edge bins
+const centerBias = 6.4;            // pull toward center
+const EDGE_ACCEPT_PROB = 0.001;    // 1/1000 for 500 bins
 
-// peg rows (top → bottom)
+// peg rows (top → bottom) with +2 extra rows
 const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14];
 
 /* =============== TELEGRAM + DOM =============== */
@@ -35,6 +46,7 @@ const canvas = document.getElementById('plinkoCanvas');
 const ctx = canvas.getContext('2d');
 
 const dom = {
+  // existing ids from your HTML
   ballsCount: document.getElementById('ballsCount'),
   regenTimer: document.getElementById('regenTimer'),
   dropBtn: document.getElementById('dropBtn'),
@@ -43,27 +55,43 @@ const dom = {
   leaderboardList: document.getElementById('leaderboardList'),
   modal: document.getElementById('modal'),
   modalContent: document.getElementById('modalContent'),
-  closeModalBtn: document.getElementById('closeModal')
+  closeModalBtn: document.getElementById('closeModal'),
+
+  // optional/expected ids for headings and nav
+  title: document.getElementById('titleText'),
+  subtitle: document.getElementById('subtitleText'),
+  chadSantaText: document.getElementById('chadSantaText'),
+
+  // nav buttons (may exist from your template)
+  openLeaderboard: document.getElementById('openLeaderboard'),
+  backFromLeaderboard: document.getElementById('backFromLeaderboard'),
+  backFromLoot: document.getElementById('backFromLoot'),
+  backFromRef: document.getElementById('backFromRef'),
+  openLoot: document.getElementById('openLoot'),          // will route to boost
+  openLootbox: document.getElementById('openLootbox'),    // “Boosters” -> boost
+  // boost screen container (must exist in HTML as screen-boost)
+  boostList: document.getElementById('boostList'),
+  boostersBtn: document.getElementById('boostersBtn'),
+  balanceBox: document.getElementById('balanceBox') // wrapper for balance
 };
 
 /* ============== USER HELPER (TG) ============== */
 function getTelegramUser() {
   const u = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) || null;
-  // Normalize fields with sensible fallbacks
   return {
     id: u?.id ? String(u.id) : 'local_' + Math.floor(Math.random() * 999999),
     first_name: u?.first_name || 'Player',
     last_name: u?.last_name || '',
-    username: u?.username || '',           // may be empty
-    photo_url: u?.photo_url || ''          // often empty in Mini Apps (we handle fallback)
+    username: u?.username || '',
+    photo_url: u?.photo_url || ''
   };
 }
 const tgUser = getTelegramUser();
 
 /* =================== STATE ==================== */
 let coins = Number(localStorage.getItem('sc_coins') || 0);
-let balls = Number(localStorage.getItem('sc_balls') || maxBalls);
-if (isNaN(balls)) balls = maxBalls;
+let balls = Number(localStorage.getItem('sc_balls') || BASE_MAX_BALLS);
+if (isNaN(balls)) balls = BASE_MAX_BALLS;
 let lastRegen = Number(localStorage.getItem('sc_lastRegen') || Date.now());
 let regenInterval = null, regenCountdownInterval = null;
 
@@ -71,6 +99,21 @@ let obstacles = [];     // {x,y,r}
 let bins = [];          // {x,y,w,h,i}
 let ballsInFlight = []; // {x,y,vx,vy,r,alive}
 let confettiParticles = [];
+
+/* ====== BOOSTS (timed & instant) ======
+  speedsterUntil: timestamp (ms) when expires (regen x2)
+  maxiUntil:      timestamp (ms) when expires (max=500)
+  no timer for spender (instant purchase +100 balls)
+*/
+let boosts = JSON.parse(localStorage.getItem('sc_boosts') || '{}');
+if (!boosts || typeof boosts !== 'object') boosts = {};
+function isSpeedsterActive(){ return (boosts.speedsterUntil || 0) > Date.now(); }
+function isMaxiActive(){ return (boosts.maxiUntil || 0) > Date.now(); }
+function effectiveRegenSeconds(){ return isSpeedsterActive() ? BASE_REGEN_SECONDS * SPEEDSTER_MULTIPLIER : BASE_REGEN_SECONDS; }
+function effectiveMaxBalls(){ return isMaxiActive() ? BOOST_MAXI_BALLS : BASE_MAX_BALLS; }
+function saveBoosts(){
+  localStorage.setItem('sc_boosts', JSON.stringify(boosts));
+}
 
 /* =================== AUDIO ==================== */
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
@@ -116,7 +159,6 @@ function saveState(){
   localStorage.setItem('sc_lastRegen', String(lastRegen));
 }
 function saveScoreLocal(){
-  // Store name, username and avatar url so we can render a richer leaderboard
   const s = JSON.parse(localStorage.getItem('sc_scores') || '{}');
   const key = tgUser.id;
   s[key] = {
@@ -128,11 +170,11 @@ function saveScoreLocal(){
   localStorage.setItem('sc_scores', JSON.stringify(s));
 }
 function updateUI(){
-  dom.coinsCount.textContent = `${coins} SOLX`;
-  dom.balance.textContent = `${coins} SOLX`;
-  dom.ballsCount.textContent = `${balls}`;
-  saveState();
-  saveScoreLocal();
+  dom.coinsCount && (dom.coinsCount.textContent = `${coins} SOLX`);
+  dom.balance && (dom.balance.textContent = `${coins} SOLX`);
+  dom.ballsCount && (dom.ballsCount.textContent = `${balls}`);
+  saveState(); saveScoreLocal(); saveBoosts();
+  renderBoosts(); // keep statuses fresh
 }
 
 /* =============== CANVAS + LAYOUT ============== */
@@ -162,7 +204,7 @@ function buildObstaclesAndBins(){
   const bottomReserve = Math.max(88, H * 0.20);
   const usableH = H - topPadding - bottomReserve;
 
-  // ---- Peg pyramid (centered) ----
+  // Peg pyramid (centered)
   const widestCount = Math.max(...obstacleRows);
   const sideMargin = Math.max(0.06 * W, 18);
   const availableWidth = W - sideMargin * 2;
@@ -181,13 +223,12 @@ function buildObstaclesAndBins(){
     }
   }
 
-  // ---- Mobile-optimized square bins ----
-  // Keep ≥2px gaps, auto-scale so all boxes fit on one row.
+  // Square bins with ≥2px gaps, rounded corners
   const binsY = H - bottomReserve + 10;
-  const minGap = 2; // ≥2px visual gap
+  const minGap = 2;
   const maxBoxFromHeight = (bottomReserve - 22);
   const maxBoxFromWidth  = (availableWidth - minGap*(binsCount - 1)) / binsCount;
-  const vwTarget = Math.max(22, Math.min(34, Math.floor(window.innerWidth * 0.06))); // ~6vw, clamped
+  const vwTarget = Math.max(22, Math.min(34, Math.floor(window.innerWidth * 0.06)));
   const boxSize = Math.max(22, Math.min(vwTarget, maxBoxFromWidth, maxBoxFromHeight));
 
   const totalRowWidth = boxSize * binsCount + minGap * (binsCount - 1);
@@ -225,11 +266,24 @@ function resolveCircleCollision(ball, obs){
   playHitSound();
 }
 
-/* ================== RENDER ==================== */
+/* ================ RENDER HELPERS =============== */
+function drawRoundedRect(x,y,w,h,r){
+  ctx.beginPath();
+  const rr = Math.min(r, w/2, h/2);
+  ctx.moveTo(x+rr, y);
+  ctx.arcTo(x+w, y, x+w, y+h, rr);
+  ctx.arcTo(x+w, y+h, x, y+h, rr);
+  ctx.arcTo(x, y+h, x, y, rr);
+  ctx.arcTo(x, y, x+w, y, rr);
+  ctx.closePath();
+}
+
 function render(){
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
   ctx.clearRect(0,0,W,H);
+
+  // (1) Background behind canvas is set on body via JS (see initTheme()).
 
   // pegs
   for (let o of obstacles){
@@ -239,7 +293,7 @@ function render(){
     ctx.fill();
   }
 
-  // bins: fill + 1px gradient stroke + 500 glow + centered label
+  // bins: rounded fill + 1px gradient stroke + 500 glow + centered label
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
 
@@ -248,25 +302,28 @@ function render(){
     gradStroke.addColorStop(0, '#9945FF');
     gradStroke.addColorStop(1, '#0ABDE3');
 
-    // 500-bin glow
+    // fill
     if (payouts[i] === 500){
       ctx.save();
       ctx.shadowColor = 'rgba(153,69,255,0.28)';
       ctx.shadowBlur = 20;
       ctx.fillStyle = 'rgba(255,255,255,0.04)';
-      ctx.fillRect(b.x, b.y, b.w, b.h);
+      drawRoundedRect(b.x, b.y, b.w, b.h, 10);
+      ctx.fill();
       ctx.restore();
     } else {
       ctx.fillStyle = 'rgba(255,255,255,0.03)';
-      ctx.fillRect(b.x, b.y, b.w, b.h);
+      drawRoundedRect(b.x, b.y, b.w, b.h, 10);
+      ctx.fill();
     }
 
     // 1px stroke
     ctx.lineWidth = 1;
     ctx.strokeStyle = gradStroke;
-    ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
+    drawRoundedRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, 10);
+    ctx.stroke();
 
-    // label (dynamic size for small boxes)
+    // label
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
     const labelSize = Math.max(10, Math.min(13, Math.floor(b.w * 0.36)));
     ctx.font = `700 ${labelSize}px Inter, system-ui`;
@@ -275,7 +332,7 @@ function render(){
     ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2);
   }
 
-  // balls with strong Solana glow (purple → teal)
+  // balls with strong Solana glow
   for (let b of ballsInFlight){
     const glowR = Math.max(b.r * 4.5, 18);
     const grad = ctx.createRadialGradient(b.x, b.y, b.r*0.2, b.x, b.y, glowR);
@@ -288,13 +345,11 @@ function render(){
     ctx.arc(b.x, b.y, glowR, 0, Math.PI*2);
     ctx.fill();
 
-    // shadow
+    // shadow + core
     ctx.beginPath();
     ctx.fillStyle = 'rgba(0,0,0,0.20)';
     ctx.arc(b.x + 2, b.y + 3, b.r + 1.8, 0, Math.PI*2);
     ctx.fill();
-
-    // ball core
     ctx.beginPath();
     ctx.fillStyle = '#ffffff';
     ctx.arc(b.x, b.y, b.r, 0, Math.PI*2);
@@ -355,14 +410,12 @@ function drawConfetti(now){
 }
 
 /* ========== LEADERBOARD RENDERING ============ */
-// Helpers for avatar initials
 function getInitials(name) {
   const parts = (name || '').trim().split(/\s+/);
   const a = (parts[0] || '').charAt(0);
   const b = (parts[1] || '').charAt(0);
   return (a + b).toUpperCase() || 'P';
 }
-
 function renderLeaderboard(){
   const obj = JSON.parse(localStorage.getItem('sc_scores') || '{}');
   const arr = Object.keys(obj).map(k => ({
@@ -374,13 +427,14 @@ function renderLeaderboard(){
   }));
   arr.sort((a,b) => b.coins - a.coins);
 
-  dom.leaderboardList.innerHTML = '';
+  const list = dom.leaderboardList;
+  if (!list) return;
+  list.innerHTML = '';
   if (!arr.length) {
-    dom.leaderboardList.innerHTML = '<div class="muted">No scores yet — be the first!</div>';
+    list.innerHTML = '<div class="muted">No scores yet — be the first!</div>';
     return;
   }
 
-  // Build rows with avatar + name + @username + score
   arr.slice(0, 20).forEach((p, i) => {
     const row = document.createElement('div');
     row.style.display = 'flex';
@@ -388,11 +442,10 @@ function renderLeaderboard(){
     row.style.justifyContent = 'space-between';
     row.style.gap = '10px';
     row.style.padding = '8px 10px';
-    row.style.borderRadius = '10px';
-    row.style.background = 'rgba(255,255,255,0.03)';
+    row.style.borderRadius = '12px';
+    row.style.background = 'rgba(255,255,255,0.04)';
     row.style.marginBottom = '6px';
 
-    // Left side: rank + avatar + name + username
     const left = document.createElement('div');
     left.style.display = 'flex';
     left.style.alignItems = 'center';
@@ -405,7 +458,6 @@ function renderLeaderboard(){
     rank.style.fontWeight = '800';
     rank.style.color = i === 0 ? '#14F195' : 'rgba(255,255,255,0.9)';
 
-    // Avatar container
     const avatarWrap = document.createElement('div');
     avatarWrap.style.width = '36px';
     avatarWrap.style.height = '36px';
@@ -449,30 +501,29 @@ function renderLeaderboard(){
     name.style.fontWeight = '700';
     name.style.color = 'rgba(255,255,255,0.95)';
 
-    const uname = document.createElement('div');
     if (p.username) {
+      const uname = document.createElement('div');
       uname.textContent = '@' + p.username;
       uname.style.fontSize = '12px';
       uname.style.color = 'rgba(255,255,255,0.55)';
+      nameBlock.appendChild(name);
+      nameBlock.appendChild(uname);
+    } else {
+      nameBlock.appendChild(name);
     }
 
-    nameBlock.appendChild(name);
-    if (p.username) nameBlock.appendChild(uname);
-
-    left.appendChild(rank);
-    left.appendChild(avatarWrap);
-    left.appendChild(nameBlock);
-
-    // Right side: score
     const score = document.createElement('div');
     score.textContent = `${p.coins} SOLX`;
     score.style.fontWeight = '800';
     score.style.color = 'rgba(255,255,255,0.95)';
 
+    left.appendChild(rank);
+    left.appendChild(avatarWrap);
+    left.appendChild(nameBlock);
+
     row.appendChild(left);
     row.appendChild(score);
-
-    dom.leaderboardList.appendChild(row);
+    list.appendChild(row);
   });
 }
 
@@ -491,12 +542,12 @@ function step(now){
     const b = ballsInFlight[bi];
     if (!b.alive) { ballsInFlight.splice(bi,1); continue; }
 
-    // center bias acceleration (steers toward center)
+    // center bias
     const dxCenter = (centerX - b.x);
     const axCenter = dxCenter * centerBias * 0.001;
     b.vx += axCenter * dt;
 
-    // integrate gravity + damping
+    // integrate
     b.vy += gravity * dt;
     b.vx *= Math.pow(friction, dt*60);
     b.vy *= Math.pow(friction, dt*60);
@@ -525,7 +576,6 @@ function step(now){
     // landing
     const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
     if (b.y + b.r >= bottomTrigger){
-      // map to bin index by x inside bins span
       const firstLeft = bins[0].x;
       const lastRight = bins[bins.length-1].x + bins[bins.length-1].w;
       const span = lastRight - firstLeft;
@@ -603,73 +653,285 @@ function dropBall(){
   ballsInFlight.push({ x: startX, y: startY, vx: initVx, vy: initVy, r: ballRadius, alive: true });
 }
 
-function startRegen(){
-  const now = Date.now();
-  const elapsed = Math.floor((now - lastRegen) / 1000);
-  if (elapsed >= regenSeconds){
-    const add = Math.floor(elapsed / regenSeconds);
-    balls = Math.min(maxBalls, balls + add);
-    lastRegen = lastRegen + add * regenSeconds * 1000;
-    if (balls >= maxBalls) lastRegen = Date.now();
-    updateUI();
-  }
-  if (regenCountdownInterval) clearInterval(regenCountdownInterval);
-  regenCountdownInterval = setInterval(() => {
-    const secs = Math.max(0, regenSeconds - Math.floor((Date.now() - lastRegen) / 1000));
-    dom.regenTimer.textContent = `${secs}s`;
-  }, 1000);
-
-  if (regenInterval) clearInterval(regenInterval);
-  regenInterval = setInterval(() => {
-    if (balls < maxBalls) { balls += 1; lastRegen = Date.now(); updateUI(); }
-    else lastRegen = Date.now();
-  }, regenSeconds * 1000);
+/* =================== BOOSTS ==================== */
+function msToHMS(ms){
+  const s = Math.max(0, Math.floor(ms/1000));
+  const h = Math.floor(s/3600);
+  const m = Math.floor((s%3600)/60);
+  const ss = s%60;
+  return `${h}h ${m}m ${ss}s`;
 }
 
-/* ======= Modal + Leaderboard (fallback local) ======= */
-function showModal(html){ dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
-function hideModal(){ dom.modal.classList.add('hidden'); }
+function renderBoosts(){
+  const wrap = dom.boostList || document.getElementById('boostList');
+  if (!wrap) return;
+  wrap.innerHTML = '';
 
-// screen nav helper (if you have multiple screens)
+  const cards = [
+    {
+      key: 'speedster',
+      title: '⚡️ Speedster',
+      desc: 'Balls regenerate 2× faster for 24 hours.',
+      cost: 500,
+      active: isSpeedsterActive(),
+      expiresAt: boosts.speedsterUntil || 0,
+      action: buySpeedster
+    },
+    {
+      key: 'maxi',
+      title: '☄️ Maxi',
+      desc: 'Max balls increases to 500/500 for 24 hours.',
+      cost: 5000,
+      active: isMaxiActive(),
+      expiresAt: boosts.maxiUntil || 0,
+      action: buyMaxi
+    },
+    {
+      key: 'spender',
+      title: '🪙 Spender',
+      desc: 'Purchase 100 ball drops instantly.',
+      cost: 2500,
+      active: false,
+      expiresAt: 0,
+      action: buySpender
+    }
+  ];
+
+  cards.forEach(card => {
+    const C = document.createElement('div');
+    C.style.background = 'rgba(255,255,255,0.05)';
+    C.style.border = '1px solid rgba(255,255,255,0.06)';
+    C.style.borderRadius = '16px';
+    C.style.padding = '14px';
+    C.style.display = 'flex';
+    C.style.flexDirection = 'column';
+    C.style.gap = '8px';
+    C.style.alignItems = 'center';
+    C.style.textAlign = 'center';
+    C.style.marginBottom = '10px';
+
+    const T = document.createElement('div');
+    T.textContent = card.title;
+    T.style.fontWeight = '800';
+    T.style.color = 'rgba(255,255,255,0.95)';
+    T.style.textShadow = '0 0 2px #000, 0 0 2px #000';
+
+    const D = document.createElement('div');
+    D.textContent = card.desc;
+    D.style.color = 'rgba(255,255,255,0.8)';
+    D.style.fontSize = '13px';
+
+    const status = document.createElement('div');
+    status.style.color = card.active ? '#14F195' : 'rgba(255,255,255,0.55)';
+    status.style.fontWeight = '700';
+    status.style.fontSize = '12px';
+    status.textContent = card.active
+      ? `Active • ${msToHMS((card.expiresAt || 0) - Date.now())} left`
+      : `Cost: ${card.cost} SOLX`;
+
+    const btn = document.createElement('button');
+    btn.textContent = card.active ? 'Active' : 'Buy';
+    btn.disabled = card.active || coins < card.cost;
+    stylePrimaryButton(btn); // same colors as Drop
+    btn.style.minWidth = '140px';
+    btn.addEventListener('click', () => {
+      if (btn.disabled) return;
+      card.action(card.cost);
+    });
+
+    C.appendChild(T); C.appendChild(D); C.appendChild(status); C.appendChild(btn);
+    wrap.appendChild(C);
+  });
+
+  // Update every second to refresh countdowns if visible
+  if (!renderBoosts._timer){
+    renderBoosts._timer = setInterval(()=> {
+      if (document.getElementById('screen-boost')?.classList.contains('active')){
+        renderBoosts();
+      }
+    }, 1000);
+  }
+}
+
+function buySpeedster(cost){
+  if (coins < cost) return;
+  coins -= cost;
+  boosts.speedsterUntil = Date.now() + 24*3600*1000;
+  updateUI();
+  showModal('<div style="font-weight:800;font-size:16px">⚡️ Speedster activated for 24h!</div>');
+}
+
+function buyMaxi(cost){
+  if (coins < cost) return;
+  coins -= cost;
+  boosts.maxiUntil = Date.now() + 24*3600*1000;
+  // if new max < current balls? (won’t happen, it increases) — ensure cap next expiry
+  if (balls > effectiveMaxBalls()) balls = effectiveMaxBalls();
+  updateUI();
+  showModal('<div style="font-weight:800;font-size:16px">☄️ Maxi activated: Max 500 for 24h!</div>');
+}
+
+function buySpender(cost){
+  if (coins < cost) return;
+  coins -= cost;
+  balls = Math.min(effectiveMaxBalls(), balls + 100);
+  updateUI();
+  showModal('<div style="font-weight:800;font-size:16px">🪙 +100 balls added!</div>');
+}
+
+/* ================== REGEN ===================== */
+function startRegen(){
+  // normalize lastRegen if max has changed
+  if (balls > effectiveMaxBalls()) balls = effectiveMaxBalls();
+  const now = Date.now();
+  const elapsed = Math.floor((now - lastRegen) / 1000);
+  const stepSecs = effectiveRegenSeconds();
+
+  if (elapsed >= stepSecs){
+    const add = Math.floor(elapsed / stepSecs);
+    balls = Math.min(effectiveMaxBalls(), balls + add);
+    lastRegen = lastRegen + add * stepSecs * 1000;
+    if (balls >= effectiveMaxBalls()) lastRegen = Date.now();
+    updateUI();
+  }
+
+  // countdown text
+  if (regenCountdownInterval) clearInterval(regenCountdownInterval);
+  regenCountdownInterval = setInterval(() => {
+    const secs = Math.max(0, Math.floor(effectiveRegenSeconds() - (Date.now() - lastRegen)/1000));
+    dom.regenTimer && (dom.regenTimer.textContent = `${secs}s`);
+  }, 1000);
+
+  // tick to add balls
+  if (regenInterval) clearInterval(regenInterval);
+  regenInterval = setInterval(() => {
+    if (balls < effectiveMaxBalls()) { balls += 1; lastRegen = Date.now(); updateUI(); }
+    else lastRegen = Date.now();
+  }, effectiveRegenSeconds() * 1000);
+}
+
+/* ======= Modal (existing) ======= */
+function showModal(html){ if (!dom.modal) return; dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
+function hideModal(){ dom.modal?.classList.add('hidden'); }
+
+/* ======= Screen nav helper ======= */
 function showScreen(k){
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
-  document.getElementById('screen-' + (k==='plinko' ? 'plinko' : k)).classList.add('active');
+  const id = 'screen-' + (k==='plinko' ? 'plinko' : k);
+  document.getElementById(id)?.classList.add('active');
   document.querySelectorAll('.nav-btn').forEach(b => b.classList.remove('active'));
   const active = Array.from(document.querySelectorAll('.nav-btn')).find(b => b.dataset.target === k);
   if (active) active.classList.add('active');
+
   if (k === 'leaderboard') renderLeaderboard();
+  if (k === 'boost') renderBoosts();
+}
+
+/* ======= THEME / AESTHETICS ======= */
+function initTheme(){
+  // 1) Galaxy / Solana background (very dark)
+  Object.assign(document.body.style, {
+    background: 'radial-gradient(1200px 700px at 80% -10%, rgba(20,241,149,0.12), rgba(0,0,0,0)),'+
+                'radial-gradient(900px 500px at 0% 120%, rgba(153,69,255,0.14), rgba(0,0,0,0)),'+
+                'linear-gradient(180deg, #0b0b12 0%, #05060a 100%)',
+    backgroundAttachment: 'fixed',
+    color: 'rgba(255,255,255,0.95)'
+  });
+
+  // 2) Button text outline (white bold with black outline)
+  // Apply to primary buttons we can access
+  if (dom.dropBtn) {
+    stylePrimaryButton(dom.dropBtn);
+    dom.dropBtn.style.textShadow = '0 0 2px #000, 0 0 2px #000';
+  }
+  // Balance counter box aesthetics
+  const boxTargets = [dom.coinsCount, dom.balance];
+  boxTargets.forEach(el => {
+    if (!el) return;
+    el.style.fontWeight = '800';
+    el.style.color = '#fff';
+    el.style.textShadow = '0 0 2px #000, 0 0 2px #000';
+    if (el.parentElement){
+      el.parentElement.style.background = 'rgba(255,255,255,0.06)';
+      el.parentElement.style.border = '1px solid rgba(255,255,255,0.14)';
+      el.parentElement.style.borderRadius = '14px';
+      el.parentElement.style.padding = '8px 12px';
+      el.parentElement.style.backdropFilter = 'blur(4px)';
+    }
+  });
+
+  // 3) Headings/subheadings text changes
+  if (dom.title) dom.title.textContent = 'SOLMAS Plinko';
+  if (dom.subtitle) dom.subtitle.textContent = 'Every drop is a win';
+  if (dom.chadSantaText && dom.chadSantaText.remove) dom.chadSantaText.remove(); // remove placeholder line
+
+  // 4) Rename Loot -> Boost; “Open Lootbox” -> “Boosters” and route to Boost
+  document.querySelectorAll('.nav-btn').forEach(b => {
+    if (b.textContent?.toLowerCase().includes('loot')) {
+      b.textContent = '🚀 Boost';
+      b.dataset.target = 'boost';
+      styleSecondaryButton(b);
+    }
+  });
+  if (dom.openLoot) { dom.openLoot.textContent = '🚀 Boost'; dom.openLoot.dataset.target = 'boost'; }
+  if (dom.openLootbox) { dom.openLootbox.textContent = 'Boosters'; dom.openLootbox.onclick = () => showScreen('boost'); }
+  if (dom.boostersBtn) { dom.boostersBtn.onclick = () => showScreen('boost'); }
+
+  // Make other buttons text outlined too
+  document.querySelectorAll('button').forEach(btn=>{
+    btn.style.fontWeight = '800';
+    btn.style.color = '#fff';
+    btn.style.textShadow = '0 0 2px #000, 0 0 2px #000';
+  });
+}
+
+// primary button style (same palette as Drop)
+function stylePrimaryButton(btn){
+  if (!btn) return;
+  btn.style.background = 'linear-gradient(90deg,#9945FF,#0ABDE3)';
+  btn.style.border = 'none';
+  btn.style.borderRadius = '14px';
+  btn.style.padding = '10px 16px';
+  btn.style.fontWeight = '800';
+  btn.style.color = '#fff';
+  btn.style.cursor = 'pointer';
+}
+function styleSecondaryButton(btn){
+  if (!btn) return;
+  btn.style.background = 'rgba(255,255,255,0.06)';
+  btn.style.border = '1px solid rgba(255,255,255,0.14)';
+  btn.style.borderRadius = '12px';
+  btn.style.padding = '8px 12px';
+  btn.style.fontWeight = '800';
+  btn.style.color = '#fff';
 }
 
 /* ================== EVENTS ==================== */
 document.getElementById('dropBtn')?.addEventListener('click', dropBall);
-document.getElementById('openLeaderboard')?.addEventListener('click', ()=> showScreen('leaderboard'));
-document.getElementById('backFromLeaderboard')?.addEventListener('click', ()=> showScreen('plinko'));
-document.getElementById('backFromLoot')?.addEventListener('click', ()=> showScreen('plinko'));
-document.getElementById('backFromRef')?.addEventListener('click', ()=> showScreen('plinko'));
-
+dom.openLeaderboard?.addEventListener('click', ()=> showScreen('leaderboard'));
+dom.backFromLeaderboard?.addEventListener('click', ()=> showScreen('plinko'));
+dom.backFromLoot?.addEventListener('click', ()=> showScreen('plinko'));
+dom.backFromRef?.addEventListener('click', ()=> showScreen('plinko'));
 document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', ()=> showScreen(b.dataset.target)));
-document.querySelectorAll('.loot-open').forEach(b => b.addEventListener('click', e => {
-  const tier = e.currentTarget.dataset.tier;
-  const reward = tier === 'legend' ? (Math.floor(Math.random()*150)+50)
-                 : (tier==='rare' ? (Math.floor(Math.random()*50)+15)
-                 : (Math.floor(Math.random()*20)+5));
-  coins += reward; updateUI(); showModal(`<div style="font-size:18px;font-weight:800">🎉 You got ${reward} SOLX!</div>`);
-}));
 
-document.getElementById('copyRef')?.addEventListener('click', async ()=> {
-  const inp = document.getElementById('refLink');
-  try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
-  catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
-});
+// “Loot” -> “Boost”
+dom.openLoot?.addEventListener('click', ()=> showScreen('boost'));
+dom.openLootbox?.addEventListener('click', ()=> showScreen('boost'));
+dom.boostersBtn?.addEventListener('click', ()=> showScreen('boost'));
+
 dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
 
 /* =================== INIT ===================== */
 let loopStarted = false;
 function init(){
+  initTheme();
   fitCanvas();
   buildObstaclesAndBins();
+  // ensure caps consistent if boosts active on load
+  if (balls > effectiveMaxBalls()) balls = effectiveMaxBalls();
   updateUI();
   renderLeaderboard();
+  renderBoosts();
   startRegen();
   if (!loopStarted) { loopStarted = true; requestAnimationFrame(step); }
 }
