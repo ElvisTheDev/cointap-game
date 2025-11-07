@@ -1,31 +1,32 @@
-/* app.js - Updated per request:
-   - +2 peg rows (rows 3..14)
-   - stronger Solana glow on balls (restored)
-   - stronger glow on 500 coin bins
-   - at least 2px visual gap between prize boxes
-   - 1px gradient stroke around prize boxes (button color scheme)
-   - keeps 1/1000 acceptance for 500 bins and other features from tuned version
+/* app.js — Mobile-optimized Plinko (Telegram Mini App)
+   - Peg rows: 3..14 (12 rows total)
+   - Bins (12): [500,100,50,20,5,1,1,5,20,50,100,500]
+   - Square prize boxes, ≥2px gaps, 1px gradient stroke, 500-bin glow
+   - Strong Solana ball glow (purple→teal)
+   - Physics + center bias + 1/1000 acceptance for 500 edge bins
+   - Sounds on peg hit / land; confetti on 500
 */
 
-/* CONFIG */
-const payouts = [500,100,50,20,5,1,1,5,20,50,100,500]; // 12 bins (unchanged)
+/* =================== CONFIG =================== */
+const payouts = [500,100,50,20,5,1,1,5,20,50,100,500]; // 12 bins
 const binsCount = payouts.length;
 
-const ballRadius = 4;                // px
-const obstacleRadius = 4;            // px
-const gravity = 1200;                // px/s^2
+const ballRadius = 4;         // px
+const obstacleRadius = 4;     // px
+const gravity = 1200;         // px/s^2
 const restitution = 0.72;
 const friction = 0.995;
 const maxBalls = 100;
 const regenSeconds = 60;
 
-// center bias and edge acceptance for 500 bins
-const centerBias = 6.4;
-const EDGE_ACCEPT_PROB = 0.001;
+// physics shaping
+const centerBias = 6.4;       // pull toward center (reduces edge hits)
+const EDGE_ACCEPT_PROB = 0.001; // 1/1000 acceptance for 500 edge bins
 
-////////////////////
-// DOM + TELEGRAM
-////////////////////
+// peg rows (top → bottom)
+const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14];
+
+/* =============== TELEGRAM + DOM =============== */
 const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.WebApp : null;
 if (TELEGRAM) { try { TELEGRAM.ready(); } catch(e) {} }
 
@@ -44,28 +45,28 @@ const dom = {
   closeModalBtn: document.getElementById('closeModal')
 };
 
-////////////////////
-// STATE
-////////////////////
+/* =================== STATE ==================== */
 let coins = Number(localStorage.getItem('sc_coins') || 0);
 let balls = Number(localStorage.getItem('sc_balls') || maxBalls);
 if (isNaN(balls)) balls = maxBalls;
 let lastRegen = Number(localStorage.getItem('sc_lastRegen') || Date.now());
 let regenInterval = null, regenCountdownInterval = null;
 
-let obstacles = [];   // {x,y,r}
-let bins = [];        // {x,y,w,h,i}
+let obstacles = [];     // {x,y,r}
+let bins = [];          // {x,y,w,h,i}
 let ballsInFlight = []; // {x,y,vx,vy,r,alive}
 let confettiParticles = [];
-let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user) ? TELEGRAM.initDataUnsafe.user : { id: 'local_'+Math.floor(Math.random()*99999), first_name: 'You' };
 
-////////////////////
-// AUDIO
-////////////////////
+let user = (TELEGRAM && TELEGRAM.initDataUnsafe && TELEGRAM.initDataUnsafe.user)
+  ? TELEGRAM.initDataUnsafe.user
+  : { id: 'local_' + Math.floor(Math.random()*99999), first_name: 'You' };
+
+/* =================== AUDIO ==================== */
 const AudioCtx = window.AudioContext || window.webkitAudioContext;
 let audioCtx = null;
-function ensureAudio() { if (!audioCtx) audioCtx = new AudioCtx(); }
-function playHitSound() {
+function ensureAudio(){ if (!audioCtx) audioCtx = new AudioCtx(); }
+
+function playHitSound(){
   try {
     ensureAudio();
     const t = audioCtx.currentTime;
@@ -78,9 +79,10 @@ function playHitSound() {
     g.gain.exponentialRampToValueAtTime(0.0001, t + 0.12);
     o.connect(g); g.connect(audioCtx.destination);
     o.start(t); o.stop(t + 0.14);
-  } catch(e) {}
+  } catch(e){}
 }
-function playLandSound(isBig=false) {
+
+function playLandSound(isBig=false){
   try {
     ensureAudio();
     const t = audioCtx.currentTime;
@@ -93,12 +95,10 @@ function playLandSound(isBig=false) {
     g.gain.exponentialRampToValueAtTime(0.0001, t + (isBig ? 0.7 : 0.22));
     o.connect(g); g.connect(audioCtx.destination);
     o.start(t); o.stop(t + (isBig ? 0.72 : 0.24));
-  } catch(e) {}
+  } catch(e){}
 }
 
-////////////////////
-// STORAGE & UI
-////////////////////
+/* =============== PERSISTENCE/UI =============== */
 function saveState(){
   localStorage.setItem('sc_coins', String(coins));
   localStorage.setItem('sc_balls', String(balls));
@@ -117,12 +117,14 @@ function updateUI(){
   saveScoreLocal();
 }
 
-////////////////////
-// CANVAS + LAYOUT (UI optimized fits screen)
-////////////////////
+/* =============== CANVAS + LAYOUT ============== */
 function fitCanvas(){
   const cssWidth = Math.min(window.innerWidth * 0.92, 940);
-  const cssHeight = Math.min(Math.max(340, window.innerHeight * 0.44), 520);
+  const isPhone = window.innerWidth <= 420;
+  const cssHeight = isPhone
+    ? Math.min(Math.max(320, window.innerHeight * 0.40), 480)
+    : Math.min(Math.max(340, window.innerHeight * 0.44), 520);
+
   canvas.style.width = cssWidth + 'px';
   canvas.style.height = cssHeight + 'px';
   const ratio = window.devicePixelRatio || 1;
@@ -130,9 +132,6 @@ function fitCanvas(){
   canvas.height = Math.round(cssHeight * ratio);
   ctx.setTransform(ratio,0,0,ratio,0,0);
 }
-
-/* NEW: 2 extra rows added (3..14) */
-const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14]; // now 12 rows (was 10)
 
 function buildObstaclesAndBins(){
   obstacles = [];
@@ -142,9 +141,10 @@ function buildObstaclesAndBins(){
   const H = canvas.clientHeight;
 
   const topPadding = Math.max(14, H * 0.03);
-  const bottomReserve = Math.max(96, H * 0.20);
+  const bottomReserve = Math.max(88, H * 0.20);
   const usableH = H - topPadding - bottomReserve;
 
+  // ---- Peg pyramid (centered) ----
   const widestCount = Math.max(...obstacleRows);
   const sideMargin = Math.max(0.06 * W, 18);
   const availableWidth = W - sideMargin * 2;
@@ -163,24 +163,26 @@ function buildObstaclesAndBins(){
     }
   }
 
-  // square bins with visual gap >= 2px and 1px gradient stroke
-  const binsY = canvas.clientHeight - bottomReserve + 12;
-  const totalGap = Math.max(2, 2) * (binsCount - 1); // at least 2px gap each between boxes
-  const rawBinAreaWidth = availableWidth - totalGap;
-  const gapPx = 2;
-  const binSize = Math.max(34, Math.min((rawBinAreaWidth / binsCount), bottomReserve - 28));
-  const binsLeft = (W - (binSize * binsCount + gapPx * (binsCount - 1))) / 2;
+  // ---- Mobile-optimized square bins ----
+  // Keep ≥2px gaps, auto-scale so all boxes fit on one row.
+  const binsY = H - bottomReserve + 10;
+  const minGap = 2; // ≥2px visual gap
+  const maxBoxFromHeight = (bottomReserve - 22);
+  const maxBoxFromWidth  = (availableWidth - minGap*(binsCount - 1)) / binsCount;
+  const vwTarget = Math.max(22, Math.min(34, Math.floor(window.innerWidth * 0.06))); // ~6vw, clamped
+  const boxSize = Math.max(22, Math.min(vwTarget, maxBoxFromWidth, maxBoxFromHeight));
+
+  const totalRowWidth = boxSize * binsCount + minGap * (binsCount - 1);
+  const binsLeft = (W - totalRowWidth) / 2;
 
   for (let i = 0; i < binsCount; i++){
-    const x = binsLeft + i * (binSize + gapPx);
-    const y = binsY + (bottomReserve - 12 - binSize);
-    bins.push({ x, y, w: binSize, h: binSize, i });
+    const x = binsLeft + i * (boxSize + minGap);
+    const y = binsY + (bottomReserve - 10 - boxSize);
+    bins.push({ x, y, w: boxSize, h: boxSize, i });
   }
 }
 
-////////////////////
-// COLLISIONS
-////////////////////
+/* ================= COLLISIONS ================= */
 function collidingCircleCircle(a, b){
   const dx = a.x - b.x;
   const dy = a.y - b.y;
@@ -205,9 +207,7 @@ function resolveCircleCollision(ball, obs){
   playHitSound();
 }
 
-////////////////////
-// RENDER (restored strong ball glow + 500 box glow + 1px gradient stroke + 2px gaps)
-////////////////////
+/* ================== RENDER ==================== */
 function render(){
   const W = canvas.clientWidth;
   const H = canvas.clientHeight;
@@ -221,19 +221,19 @@ function render(){
     ctx.fill();
   }
 
-  // draw bins: fill, stroke gradient border, and 500 glow
+  // bins: fill + 1px gradient stroke + 500 glow + centered label
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
 
-    // create stroke gradient matching button colors (purple -> teal)
+    // gradient stroke (button colors)
     const gradStroke = ctx.createLinearGradient(b.x, b.y, b.x + b.w, b.y + b.h);
-    gradStroke.addColorStop(0, '#9945FF'); // purple
-    gradStroke.addColorStop(1, '#0ABDE3'); // teal
+    gradStroke.addColorStop(0, '#9945FF');
+    gradStroke.addColorStop(1, '#0ABDE3');
 
-    // 500-bin glow (stronger)
+    // 500-bin glow
     if (payouts[i] === 500){
       ctx.save();
-      ctx.shadowColor = 'rgba(153,69,255,0.28)'; // purple-ish glow
+      ctx.shadowColor = 'rgba(153,69,255,0.28)';
       ctx.shadowBlur = 20;
       ctx.fillStyle = 'rgba(255,255,255,0.04)';
       ctx.fillRect(b.x, b.y, b.w, b.h);
@@ -243,26 +243,27 @@ function render(){
       ctx.fillRect(b.x, b.y, b.w, b.h);
     }
 
-    // stroke (1px) using gradient
+    // 1px stroke
     ctx.lineWidth = 1;
     ctx.strokeStyle = gradStroke;
-    ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1); // 0.5 to align crisp 1px
+    ctx.strokeRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1);
 
-    // draw payout label
+    // label (dynamic size for small boxes)
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
-    ctx.font = '700 12px Inter, system-ui';
+    const labelSize = Math.max(10, Math.min(13, Math.floor(b.w * 0.36)));
+    ctx.font = `700 ${labelSize}px Inter, system-ui`;
     ctx.textAlign = 'center';
-    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2 + 4);
+    ctx.textBaseline = 'middle';
+    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2);
   }
 
-  // balls with restored (stronger) Solana glow
+  // balls with strong Solana glow (purple → teal)
   for (let b of ballsInFlight){
-    // stronger glow radius & alpha
-    const glowR = Math.max(b.r * 4.5, 18); // significant glow
+    const glowR = Math.max(b.r * 4.5, 18);
     const grad = ctx.createRadialGradient(b.x, b.y, b.r*0.2, b.x, b.y, glowR);
-    grad.addColorStop(0, 'rgba(153,69,255,0.95)'); // purple dense
+    grad.addColorStop(0, 'rgba(153,69,255,0.95)');
     grad.addColorStop(0.35, 'rgba(153,69,255,0.55)');
-    grad.addColorStop(0.65, 'rgba(10,189,227,0.45)'); // teal outer
+    grad.addColorStop(0.65, 'rgba(10,189,227,0.45)');
     grad.addColorStop(1, 'rgba(10,189,227,0)');
     ctx.beginPath();
     ctx.fillStyle = grad;
@@ -283,9 +284,7 @@ function render(){
   }
 }
 
-////////////////////
-// CONFETTI (unchanged)
-////////////////////
+/* ================= CONFETTI =================== */
 function startConfetti() {
   const W = canvas.getBoundingClientRect().width;
   const count = 140;
@@ -337,9 +336,7 @@ function drawConfetti(now){
   else setTimeout(()=> { const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
 }
 
-////////////////////
-// PHYSICS LOOP + 1/1000 acceptance
-////////////////////
+/* ================== PHYSICS =================== */
 let lastTime = null;
 function step(now){
   if (!lastTime) lastTime = now;
@@ -354,10 +351,12 @@ function step(now){
     const b = ballsInFlight[bi];
     if (!b.alive) { ballsInFlight.splice(bi,1); continue; }
 
+    // center bias acceleration (steers toward center)
     const dxCenter = (centerX - b.x);
     const axCenter = dxCenter * centerBias * 0.001;
     b.vx += axCenter * dt;
 
+    // integrate gravity + damping
     b.vy += gravity * dt;
     b.vx *= Math.pow(friction, dt*60);
     b.vy *= Math.pow(friction, dt*60);
@@ -365,6 +364,7 @@ function step(now){
     b.x += b.vx * dt;
     b.y += b.vy * dt;
 
+    // walls
     if (b.x - b.r < 4){
       b.x = 4 + b.r;
       b.vx = Math.abs(b.vx) * restitution;
@@ -374,6 +374,7 @@ function step(now){
       b.vx = -Math.abs(b.vx) * restitution;
     }
 
+    // peg collisions
     for (let oi = 0; oi < obstacles.length; oi++){
       const obs = obstacles[oi];
       if (collidingCircleCircle(b, obs)){
@@ -381,25 +382,26 @@ function step(now){
       }
     }
 
+    // landing
     const bottomTrigger = H - (bins[0] ? (bins[0].h + 24) : 88);
     if (b.y + b.r >= bottomTrigger){
-      const binsLeft = bins[0] ? bins[0].x : 8;
+      // map to bin index by x inside bins span
+      const firstLeft = bins[0].x;
       const lastRight = bins[bins.length-1].x + bins[bins.length-1].w;
-      const availableWidth = lastRight - binsLeft;
-      let relX = (b.x - binsLeft) / availableWidth;
+      const span = lastRight - firstLeft;
+      let relX = (b.x - firstLeft) / span;
       relX = Math.max(0, Math.min(0.9999, relX));
       let rawBinIndex = Math.floor(relX * binsCount);
       rawBinIndex = Math.max(0, Math.min(binsCount - 1, rawBinIndex));
       let finalBin = rawBinIndex;
 
-      // post-process 500 acceptance
+      // enforce 1/1000 edge jackpot acceptance
       if (payouts[rawBinIndex] === 500) {
         if (Math.random() < EDGE_ACCEPT_PROB) {
           finalBin = rawBinIndex;
         } else {
           if (rawBinIndex === 0) finalBin = 1;
           else if (rawBinIndex === binsCount - 1) finalBin = binsCount - 2;
-          else finalBin = rawBinIndex;
         }
       }
 
@@ -411,7 +413,6 @@ function step(now){
       spawnFloatingReward(b.x, bottomTrigger - 18, `+${reward}`);
       ballsInFlight.splice(bi, 1);
       updateUI();
-      continue;
     }
   }
 
@@ -419,9 +420,7 @@ function step(now){
   requestAnimationFrame(step);
 }
 
-////////////////////
-// spawn floating reward
-////////////////////
+/* ======== Floating +X reward tag (non-modal) ======== */
 function spawnFloatingReward(x, y, text){
   const el = document.createElement('div');
   el.textContent = text;
@@ -448,9 +447,7 @@ function spawnFloatingReward(x, y, text){
   setTimeout(()=> el.remove(), 950);
 }
 
-////////////////////
-// drop ball
-////////////////////
+/* ================== GAMEPLAY =================== */
 function dropBall(){
   if (balls <= 0){
     showModal('<div style="font-weight:700">No balls left — wait for regen</div>');
@@ -466,9 +463,6 @@ function dropBall(){
   ballsInFlight.push({ x: startX, y: startY, vx: initVx, vy: initVy, r: ballRadius, alive: true });
 }
 
-////////////////////
-// regen & UI
-////////////////////
 function startRegen(){
   const now = Date.now();
   const elapsed = Math.floor((now - lastRegen) / 1000);
@@ -492,9 +486,7 @@ function startRegen(){
   }, regenSeconds * 1000);
 }
 
-////////////////////
-// modal & leaderboard
-////////////////////
+/* ======= Modal + Leaderboard (fallback local) ======= */
 function showModal(html){ dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
 function hideModal(){ dom.modal.classList.add('hidden'); }
 
@@ -512,23 +504,24 @@ function renderLeaderboard(){
   });
 }
 
-////////////////////
-// events
-////////////////////
-document.getElementById('dropBtn').addEventListener('click', () => { dropBall(); });
-document.getElementById('openLeaderboard').addEventListener('click', ()=> showScreen('leaderboard'));
-document.getElementById('backFromLeaderboard').addEventListener('click', ()=> showScreen('plinko'));
-document.getElementById('backFromLoot').addEventListener('click', ()=> showScreen('plinko'));
-document.getElementById('backFromRef').addEventListener('click', ()=> showScreen('plinko'));
+/* ================== EVENTS ==================== */
+document.getElementById('dropBtn').addEventListener('click', dropBall);
+document.getElementById('openLeaderboard')?.addEventListener('click', ()=> showScreen('leaderboard'));
+document.getElementById('backFromLeaderboard')?.addEventListener('click', ()=> showScreen('plinko'));
+document.getElementById('backFromLoot')?.addEventListener('click', ()=> showScreen('plinko'));
+document.getElementById('backFromRef')?.addEventListener('click', ()=> showScreen('plinko'));
 document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', ()=> showScreen(b.dataset.target)));
 document.querySelectorAll('.loot-open').forEach(b => b.addEventListener('click', e => {
   const tier = e.currentTarget.dataset.tier;
-  const reward = tier === 'legend' ? (Math.floor(Math.random()*150)+50) : (tier==='rare' ? (Math.floor(Math.random()*50)+15) : (Math.floor(Math.random()*20)+5));
+  const reward = tier === 'legend' ? (Math.floor(Math.random()*150)+50)
+                 : (tier==='rare' ? (Math.floor(Math.random()*50)+15)
+                 : (Math.floor(Math.random()*20)+5));
   coins += reward; updateUI(); showModal(`<div style="font-size:18px;font-weight:800">🎉 You got ${reward} SOLX!</div>`);
 }));
 document.getElementById('copyRef')?.addEventListener('click', async ()=> {
   const inp = document.getElementById('refLink');
-  try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); } catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
+  try { await navigator.clipboard.writeText(inp.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
+  catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
 });
 dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
 
@@ -541,9 +534,7 @@ function showScreen(k){
   if (k === 'leaderboard') renderLeaderboard();
 }
 
-////////////////////
-// init
-////////////////////
+/* =================== INIT ===================== */
 let loopStarted = false;
 function init(){
   fitCanvas();
