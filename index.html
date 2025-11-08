@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8" />
-  <title>SOLMAS Plinko</title>
+  <title>SOLMAS</title>
   <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no"/>
   <meta name="format-detection" content="telephone=no" />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
@@ -19,7 +19,6 @@
       --sol-purple: #9945FF;
       --sol-teal: #0ABDE3;
       --radius-lg: 16px;
-      --radius-md: 12px;
       --nav-h: 58px;
       --safe-bottom: env(safe-area-inset-bottom, 0px);
     }
@@ -38,43 +37,36 @@
       touch-action:manipulation;
     }
     .app{
-      height: calc(100vh - var(--nav-h) - var(--safe-bottom) - 11px); /* +5px higher menu */
+      height: calc(100vh - var(--nav-h) - var(--safe-bottom) - 11px);
       max-width:980px; margin:0 auto; padding:10px 12px;
       display:flex; flex-direction:column; gap:8px; overflow:hidden;
     }
-    header{ flex:0 0 auto; display:flex; flex-direction:column; gap:4px; align-items:center; text-align:center; }
+    header{ flex:0 0 auto; display:flex; align-items:center; justify-content:space-between; gap:10px; }
     #titleText{ font-size:20px; font-weight:800; letter-spacing:.2px; }
-    #subtitleText{ font-size:12px; color:var(--fg-soft); }
+
+    .header-actions{ display:flex; align-items:center; gap:8px; }
+    .buyBtn{
+      background:linear-gradient(90deg, var(--sol-purple), var(--sol-teal));
+      color:#fff; font-weight:800; text-shadow:0 0 2px #000, 0 0 2px #000;
+      border:0; border-radius:12px; padding:10px 12px; font-size:13px; cursor:pointer;
+    }
 
     .screens{ flex:1 1 auto; min-height:0; display:grid; }
-    .screen{
-      display:none; grid-template-rows:auto 1fr auto; min-height:0;
-      overflow:hidden; /* per-screen no-scroll default */
-    }
+    .screen{ display:none; grid-template-rows:auto 1fr auto; min-height:0; overflow:hidden; }
     .screen.active{ display:grid; }
-
-    /* Make only the Boost and Earn screens scrollable */
-    #screen-boost, #screen-earn{
-      overflow:auto;
-      -webkit-overflow-scrolling: touch;
-    }
 
     /* PLINKO layout */
     .plinko-wrap{ display:grid; grid-template-rows:auto 1fr auto; gap:8px; min-height:0; }
-    .stats{ display:grid; grid-template-columns:1fr 1fr; gap:8px; width:100%; }
-    .statCard{
-      background:var(--glass); border:1px solid var(--stroke);
-      border-radius:14px; padding:6px 10px; display:flex; align-items:center; justify-content:space-between; backdrop-filter:blur(4px);
-      min-width:0;
-    }
-    .statLabel{ font-size:11px; color:var(--fg-dim); }
-    .statValue{ font-size:13px; font-weight:800; color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
+    .topBar{ display:flex; align-items:center; justify-content:space-between; gap:8px; }
+    .balanceBox{ background:var(--glass); border:1px solid var(--stroke); border-radius:14px; padding:8px 12px; backdrop-filter:blur(4px); min-width:140px; text-align:center; }
+    .balanceLabel{ font-size:12px; color:var(--fg-dim); }
+    .balanceValue{ font-size:16px; font-weight:800; color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
 
     .canvasWrap{
-      min-height:0; display:flex; align-items:center; justify-content:center;
+      min-height:320px; display:flex; align-items:center; justify-content:center;
       background:var(--glass-2); border:1px solid rgba(255,255,255,0.06); border-radius:var(--radius-lg); padding:8px;
     }
-    #plinkoCanvas{ width:100%; height:52vh; display:block; }
+    #plinkoCanvas{ width:100%; min-height:300px; height:52vh; display:block; }
 
     .actions{ display:flex; flex-direction:column; align-items:center; gap:6px; margin-top:-4px; }
     .primary{
@@ -82,23 +74,29 @@
       color:#fff; font-weight:800; text-shadow:0 0 2px #000, 0 0 2px #000;
       border:0; border-radius:16px; padding:16px 24px; min-width:190px; font-size:16px; cursor:pointer;
     }
-    .balanceRow{ display:flex; gap:8px; align-items:center; justify-content:center; flex-wrap:wrap; }
-    .balanceBox{ background:var(--glass); border:1px solid var(--stroke); border-radius:14px; padding:8px 12px; backdrop-filter:blur(4px); min-width:140px; text-align:center; }
-    .balanceLabel{ font-size:12px; color:var(--fg-dim); }
-    .balanceValue{ font-size:16px; font-weight:800; color:#fff; text-shadow:0 0 2px #000, 0 0 2px #000; }
+
+    /* bottom stats row (Balls + Regen) */
+    .bottomStats{
+      display:flex; gap:8px; justify-content:center; align-items:center; padding-top:2px;
+    }
+    .statChip{
+      background:var(--glass); border:1px solid var(--stroke);
+      border-radius:12px; padding:6px 10px; display:flex; align-items:center; gap:8px;
+      font-size:12px; color:var(--fg-soft);
+    }
+    .statChip strong{ color:#fff; }
 
     .pad{ padding:4px 0; }
-    #leaderboardList, #boostList, #socialList, #earnFriendsList, #inviteTopList{ display:flex; flex-direction:column; gap:8px; }
+    #leaderboardList, #boostList, #socialList, #earnFriendsList, #inviteTopList{ display:flex; flex-direction:column; gap:5px; } /* 5px gap for Earn */
     .muted{ color:var(--fg-dim); }
 
-    /* One-piece bottom menu bar (moved up by 5px) */
+    /* One-piece bottom menu bar */
     .bottomNav{
       position:fixed; left:8px; right:8px; bottom:calc(11px + var(--safe-bottom));
       height:var(--nav-h);
       background:rgba(5,6,10,0.78); backdrop-filter:blur(6px);
       border:1px solid rgba(255,255,255,0.10); border-radius:14px;
-      display:flex; align-items:center; justify-content:space-between; padding:6px 8px;
-      gap:6px;
+      display:flex; align-items:center; justify-content:space-between; padding:6px 8px; gap:6px;
     }
     .nav-btn{
       flex:1 1 0; min-width:0;
@@ -109,49 +107,63 @@
       display:inline-flex; align-items:center; justify-content:center; gap:6px;
       white-space:nowrap;
     }
-    .nav-btn.active{
-      background:rgba(255,255,255,0.06);
-      outline:1px solid rgba(153,69,255,0.35);
+    .nav-btn.active{ background:rgba(255,255,255,0.06); outline:1px solid rgba(153,69,255,0.35); }
+
+    /* Bottom sheet (Buy Drops) */
+    .sheet{
+      position:fixed; left:0; right:0; bottom:0; height:70vh; max-height:520px;
+      background:rgba(12,13,20,0.96); border-top-left-radius:16px; border-top-right-radius:16px;
+      border:1px solid rgba(255,255,255,0.12);
+      transform:translateY(100%); transition:transform 280ms ease;
+      z-index:10000; display:flex; flex-direction:column;
+      backdrop-filter:blur(8px);
+    }
+    .sheet.open{ transform:translateY(0%); }
+    .sheetHeader{
+      display:flex; align-items:center; justify-content:space-between;
+      padding:12px 14px; border-bottom:1px solid rgba(255,255,255,0.09);
+    }
+    .sheetTitle{ font-weight:800; }
+    .sheetClose{
+      background:transparent; border:0; color:#fff; font-weight:800; font-size:16px; cursor:pointer;
+    }
+    .sheetBody{ padding:12px; overflow:auto; display:flex; flex-direction:column; gap:8px; }
+    .sheetCard{
+      background:rgba(255,255,255,0.05); border:1px solid rgba(255,255,255,0.08);
+      border-radius:14px; padding:12px; display:flex; align-items:center; justify-content:space-between;
     }
 
-    /* Modal */
-    .modal.hidden{ display:none; }
-    .modal{ position:fixed; inset:0; display:grid; place-items:center; background:rgba(0,0,0,0.5); z-index:9999; }
-    .modalCard{ width:min(90vw,420px); background:rgba(18,18,26,0.9); border:1px solid rgba(255,255,255,0.12); border-radius:16px; padding:16px; color:#fff; }
-    .modalCard .close{ float:right; cursor:pointer; background:transparent; border:0; color:#fff; font-weight:800; }
+    /* Make only Boost and Earn screens scrollable */
+    #screen-boost, #screen-earn{ overflow:auto; -webkit-overflow-scrolling:touch; }
 
     @media (max-width:420px){
       #plinkoCanvas{ height:48vh; }
     }
   </style>
+
   <script src="https://telegram.org/js/telegram-web-app.js"></script>
 </head>
 <body>
   <div class="app">
     <header>
-      <div id="titleText">SOLMAS Plinko</div>
-      <div id="subtitleText">Every drop is a win</div>
+      <div id="titleText">SOLMAS</div>
+      <div class="header-actions">
+        <button id="buyDropsBtn" class="buyBtn">Buy Drops</button>
+      </div>
     </header>
 
     <section class="screens">
       <!-- ===== PLINKO ===== -->
       <div id="screen-plinko" class="screen active">
         <div class="plinko-wrap">
-          <div class="stats">
-            <div class="statCard">
-              <div>
-                <div class="statLabel">Balls</div>
-                <div class="statValue"><span id="ballsCount">100</span> / <span id="ballsMax">100</span></div>
-              </div>
-              <div>
-                <div class="statLabel">Regen</div>
-                <div class="statValue"><span id="regenTimer">60s</span></div>
-              </div>
+
+          <!-- TOP: Balance -->
+          <div class="topBar">
+            <div class="balanceBox" id="balanceBoxTop">
+              <div class="balanceLabel">Balance</div>
+              <div class="balanceValue" id="balance">0 SOLX</div>
             </div>
-            <div class="statCard">
-              <div class="statLabel">SOLX Balance</div>
-              <div class="statValue" id="coinsCount">0 SOLX</div>
-            </div>
+            <div style="flex:1"></div>
           </div>
 
           <div class="canvasWrap">
@@ -160,17 +172,16 @@
 
           <div class="actions">
             <button id="dropBtn" class="primary">DROP</button>
-            <div class="balanceRow">
-              <div class="balanceBox" id="balanceBox">
-                <div class="balanceLabel">Balance</div>
-                <div class="balanceValue" id="balance">0 SOLX</div>
-              </div>
+            <!-- BOTTOM STATS: Balls + Regen timer -->
+            <div class="bottomStats">
+              <div class="statChip">Balls: <strong><span id="ballsCount">100</span>/<span id="ballsMax">100</span></strong></div>
+              <div class="statChip">Regen in: <strong><span id="regenTimer">60s</span></strong></div>
             </div>
           </div>
         </div>
       </div>
 
-      <!-- ===== BOOST (scrollable) ===== -->
+      <!-- ===== BOOST ===== -->
       <div id="screen-boost" class="screen">
         <h3 style="margin:6px 0 4px; font-weight:800;">Get Your Boosters 🚀</h3>
         <div id="boostList" class="pad"></div>
@@ -186,36 +197,32 @@
       <div id="screen-social" class="screen">
         <h3 style="margin:6px 0 4px; font-weight:800;">Social Tasks</h3>
         <div id="socialList" class="pad">
-          <div class="statCard" style="justify-content:flex-start; gap:10px;">
-            <div>🐦 Follow on X/Twitter</div>
-            <button class="nav-btn" onclick="window.open('https://x.com/', '_blank')">Open</button>
-          </div>
-          <div class="statCard" style="justify-content:flex-start; gap:10px;">
-            <div>💬 Join Telegram Channel</div>
-            <button class="nav-btn" onclick="window.open('https://t.me/', '_blank')">Open</button>
-          </div>
-          <div class="statCard" style="justify-content:flex-start; gap:10px;">
-            <div>📺 Subscribe on YouTube</div>
-            <button class="nav-btn" onclick="window.open('https://youtube.com/', '_blank')">Open</button>
-          </div>
+          <div class="sheetCard"><div>🐦 Follow on X/Twitter</div><button class="buyBtn" onclick="window.open('https://x.com/', '_blank')">Open</button></div>
+          <div class="sheetCard"><div>💬 Join Telegram Channel</div><button class="buyBtn" onclick="window.open('https://t.me/', '_blank')">Open</button></div>
+          <div class="sheetCard"><div>📺 Subscribe on YouTube</div><button class="buyBtn" onclick="window.open('https://youtube.com/', '_blank')">Open</button></div>
         </div>
       </div>
 
-      <!-- ===== EARN (scrollable) ===== -->
+      <!-- ===== EARN (compact; 5px gaps) ===== -->
       <div id="screen-earn" class="screen">
-        <h3 style="margin:6px 0 10px; font-weight:800;">Earn 💰</h3>
+        <h3 style="margin:6px 0 8px; font-weight:800;">Earn 💰</h3>
 
-        <div class="statCard" style="flex-direction:column; align-items:flex-start; gap:8px;">
-          <div style="font-weight:800;">🎁 Rewards</div>
-          <div class="muted">🎁 Both you and your friend will receive 🪙 200 coins and ⚪ 100 ball drops.</div>
-          <div style="display:flex; gap:8px; width:100%; align-items:center;">
-            <input id="refLink" value="https://t.me/your_bot?start=ref_12345" style="flex:1; background:transparent; border:0; color:#fff; outline:none;">
-            <button id="copyRef" class="primary" style="min-width:100px;">Copy</button>
+        <!-- Compact rewards info card -->
+        <div class="sheetCard" style="padding:10px;">
+          <div style="font-weight:700; font-size:13px; line-height:1.2;">
+            🎁 Both you and your friend will receive 🪙 200 coins and ⚪ 100 ball drops.
           </div>
         </div>
 
-        <div class="statCard" style="flex-direction:column; gap:8px;">
-          <div style="display:flex; justify-content:space-between; width:100%; align-items:center;">
+        <!-- Separate box: referral link + copy -->
+        <div class="sheetCard" style="gap:8px;">
+          <input id="refLink" value="" placeholder="Your referral link…" style="flex:1; background:transparent; border:0; color:#fff; outline:none;">
+          <button id="copyRef" class="buyBtn" style="min-width:96px;">Copy</button>
+        </div>
+
+        <!-- Friends invited -->
+        <div class="sheetCard" style="flex-direction:column; align-items:stretch; gap:8px;">
+          <div style="display:flex; justify-content:space-between; align-items:center;">
             <div style="font-weight:800;">Friends invited</div>
             <div id="invitedCount" style="font-weight:800;">0</div>
           </div>
@@ -224,7 +231,8 @@
           </div>
         </div>
 
-        <div class="statCard" style="flex-direction:column; gap:8px;">
+        <!-- Top 100 invites -->
+        <div class="sheetCard" style="flex-direction:column; align-items:stretch; gap:8px;">
           <div style="font-weight:800;">Top 100 by Invites</div>
           <div id="inviteTopList" class="pad">
             <div class="muted">No data yet.</div>
@@ -243,11 +251,26 @@
     <button class="nav-btn" data-target="earn">💰 Earn</button>
   </nav>
 
-  <!-- Modal -->
-  <div id="modal" class="modal hidden">
-    <div class="modalCard">
-      <button id="closeModal" class="close">✕</button>
-      <div id="modalContent">…</div>
+  <!-- Bottom sheet: Buy Drops -->
+  <div id="buySheet" class="sheet" aria-hidden="true">
+    <div class="sheetHeader">
+      <div class="sheetTitle">Buy Drops</div>
+      <button id="sheetClose" class="sheetClose">✕</button>
+    </div>
+    <div class="sheetBody">
+      <div class="sheetCard">
+        <div>🎯 100 drops</div>
+        <button class="buyBtn" onclick="window.appBuyDrops(100)">Buy</button>
+      </div>
+      <div class="sheetCard">
+        <div>💠 300 drops</div>
+        <button class="buyBtn" onclick="window.appBuyDrops(300)">Buy</button>
+      </div>
+      <div class="sheetCard">
+        <div>🚀 1000 drops</div>
+        <button class="buyBtn" onclick="window.appBuyDrops(1000)">Buy</button>
+      </div>
+      <div class="muted" style="font-size:12px;">(Hook these buttons to Telegram Stars / your backend later.)</div>
     </div>
   </div>
 
@@ -263,6 +286,20 @@
     })();
   </script>
 
-  <script src="/app.js"></script>
+  <!-- Tiny on-screen error overlay for quick debugging -->
+  <script>
+    (function(){
+      const box = document.createElement('div');
+      box.id = 'errOverlay';
+      box.style.cssText = 'position:fixed;left:8px;right:8px;bottom:70px;z-index:99999;background:rgba(200,0,0,.12);color:#fff;padding:8px 10px;border:1px solid rgba(255,0,0,.35);border-radius:8px;font:12px/1.3 system-ui;display:none';
+      document.addEventListener('DOMContentLoaded', ()=> document.body.appendChild(box));
+      function show(msg){ box.style.display='block'; box.textContent='⚠️ '+msg; }
+      window.addEventListener('error', e => show(e.message));
+      window.addEventListener('unhandledrejection', e => show((e.reason && e.reason.message) || String(e.reason)));
+    })();
+  </script>
+
+  <!-- IMPORTANT: relative path so Vercel serves it correctly -->
+  <script src="app.js"></script>
 </body>
 </html>
