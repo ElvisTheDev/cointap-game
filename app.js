@@ -1,6 +1,6 @@
-/* app.js — physics funnels to middle (no payout remap), referral auto-award, boosters, Top100, Earn UI */
+/* app.js — SOLMAS Plinko with middle-biased physics, Buy Drops sheet, compact Earn, bin hit animation, confetti, boosts, referrals */
 
-const BOT_USERNAME = 'your_bot'; // <-- CHANGE to your bot username (without @), e.g. 'solmas_plinko_bot'
+const BOT_USERNAME = 'your_bot'; // <-- CHANGE to your bot username (no @), e.g. 'solmas_plinko_bot'
 
 /* -------- Game config -------- */
 const payouts = [100,50,20,10,5,1,1,5,10,20,50,100]; // 12 bins
@@ -21,7 +21,7 @@ let centerBias = 12.0;     // strong center attraction field
 const BASE_REGEN_SECONDS = 60;
 const SPEEDSTER_MULTIPLIER = 0.5; // 2x faster regen
 
-/* Board layout rows (triangular field already implemented upstream) */
+/* Board layout rows (triangular) */
 const obstacleRows = [3,4,5,6,7,8,9,10,11,12,13,14];
 
 const BIN_CORNER = 4;     // squarer boxes
@@ -31,25 +31,26 @@ const TELEGRAM = window.Telegram && window.Telegram.WebApp ? window.Telegram.Web
 if (TELEGRAM) { try { TELEGRAM.ready(); } catch(e) {} }
 
 const canvas = document.getElementById('plinkoCanvas');
+if (!canvas) { throw new Error('Canvas #plinkoCanvas not found in DOM'); }
 const ctx = canvas.getContext('2d');
+if (!ctx) { throw new Error('2D context failed to init'); }
 
 const dom = {
   ballsCount: document.getElementById('ballsCount'),
   ballsMax: document.getElementById('ballsMax'),
   regenTimer: document.getElementById('regenTimer'),
   dropBtn: document.getElementById('dropBtn'),
-  coinsCount: document.getElementById('coinsCount'),
   balance: document.getElementById('balance'),
   leaderboardList: document.getElementById('leaderboardList'),
-  modal: document.getElementById('modal'),
-  modalContent: document.getElementById('modalContent'),
-  closeModalBtn: document.getElementById('closeModal'),
   boostList: document.getElementById('boostList'),
   invitedCount: document.getElementById('invitedCount'),
   earnFriendsList: document.getElementById('earnFriendsList'),
   inviteTopList: document.getElementById('inviteTopList'),
   refLink: document.getElementById('refLink'),
   copyRef: document.getElementById('copyRef'),
+  buyDropsBtn: document.getElementById('buyDropsBtn'),
+  buySheet: document.getElementById('buySheet'),
+  sheetClose: document.getElementById('sheetClose')
 };
 
 function getTelegramUser(){
@@ -105,7 +106,6 @@ function saveScoreLocal(){
   localStorage.setItem('sc_scores', JSON.stringify(s));
 }
 function updateUI(){
-  if (dom.coinsCount) dom.coinsCount.textContent = `${coins} SOLX`;
   if (dom.balance) dom.balance.textContent = `${coins} SOLX`;
   if (dom.ballsCount) dom.ballsCount.textContent = `${balls}`;
   if (dom.ballsMax) dom.ballsMax.textContent = `${maxBalls()}`;
@@ -139,7 +139,7 @@ function handleReferralOnOpen(){
   localStorage.setItem(claimedKey, '1');
 
   updateUI();
-  showModal('<div style="font-weight:800;font-size:16px">🎁 Welcome! You received 🪙 200 coins and ⚪ 100 balls for joining via a friend.</div>');
+  showToast('🎁 +200 coins & +100 drops for joining!');
 }
 
 /* Fill referral link with this user’s id */
@@ -153,11 +153,11 @@ function setReferralLink(){
 /* ------ Layout sizing ------ */
 function fitCanvas(){
   const navH = 58;
-  const headerH = 56;
-  const appH = window.innerHeight - navH - 11 - 0; // menu raised + buffer
-  const statsH = 72;
-  const actionsH = 80;
-  const canvasAvail = Math.max(260, appH - headerH - statsH - actionsH);
+  const headerH = 50;
+  const appH = window.innerHeight - navH - 11;
+  const topH = 56;
+  const actionsH = 96;
+  const canvasAvail = Math.max(240, appH - headerH - topH - actionsH);
 
   const cssWidth = Math.min(window.innerWidth * 0.92, 940);
   const cssHeight = Math.min(canvasAvail, 520);
@@ -202,7 +202,7 @@ function buildObstaclesAndBins(){
     lastPegY = y;
   }
 
-  // bins row
+  // bins row (raised a bit)
   const baseBinsTop = H - bottomReserve + 10;
   const raisedTop = lastPegY + 0.3 * (baseBinsTop - lastPegY);
   const binsTop = raisedTop + BINS_EXTRA_DROP;
@@ -217,7 +217,7 @@ function buildObstaclesAndBins(){
   const left = (W - totalRowWidth) / 2;
 
   for (let i = 0; i < binsCount; i++){
-    bins.push({ x: left + i * (boxSize + minGap), y: binsTop, w: boxSize, h: boxSize, i });
+    bins.push({ x: left + i * (boxSize + minGap), y: binsTop, w: boxSize, h: boxSize, i, _hitAt: 0 });
   }
 }
 
@@ -268,31 +268,39 @@ function render(){
     ctx.fill();
   }
 
-  // bins (100s glow)
+  // bins (with hit animation)
+  const now = performance.now();
   for (let i = 0; i < bins.length; i++){
     const b = bins[i];
+    // hit flash (120ms)
+    const t = Math.max(0, 1 - (now - b._hitAt) / 120);
+    const scale = 1 + 0.08 * t; // slight grow
+    const cx = b.x + b.w/2, cy = b.y + b.h/2;
+    const w = b.w * scale, h = b.h * scale;
+    const x = cx - w/2, y = cy - h/2;
 
-    const gradStroke = ctx.createLinearGradient(b.x, b.y, b.x + b.w, b.y + b.h);
+    const gradStroke = ctx.createLinearGradient(x, y, x + w, y + h);
     gradStroke.addColorStop(0, '#9945FF');
     gradStroke.addColorStop(1, '#0ABDE3');
 
-    if (payouts[i] === 100){
+    // glow on hit or 100 bins
+    if (t > 0 || payouts[i] === 100){
       ctx.save();
-      ctx.shadowColor = 'rgba(153,69,255,0.28)';
-      ctx.shadowBlur = 18;
-      ctx.fillStyle = 'rgba(255,255,255,0.05)';
-      drawRoundedRect(b.x, b.y, b.w, b.h, BIN_CORNER);
+      ctx.shadowColor = t > 0 ? 'rgba(20,241,149,0.45)' : 'rgba(153,69,255,0.28)';
+      ctx.shadowBlur = t > 0 ? 24 : 18;
+      ctx.fillStyle = 'rgba(255,255,255,0.06)';
+      drawRoundedRect(x, y, w, h, BIN_CORNER);
       ctx.fill();
       ctx.restore();
     } else {
       ctx.fillStyle = 'rgba(255,255,255,0.035)';
-      drawRoundedRect(b.x, b.y, b.w, b.h, BIN_CORNER);
+      drawRoundedRect(x, y, w, h, BIN_CORNER);
       ctx.fill();
     }
 
     ctx.lineWidth = 1;
     ctx.strokeStyle = gradStroke;
-    drawRoundedRect(b.x + 0.5, b.y + 0.5, b.w - 1, b.h - 1, BIN_CORNER);
+    drawRoundedRect(x + 0.5, y + 0.5, w - 1, h - 1, BIN_CORNER);
     ctx.stroke();
 
     ctx.fillStyle = 'rgba(255,255,255,0.9)';
@@ -300,7 +308,7 @@ function render(){
     ctx.font = `700 ${labelSize}px Inter, system-ui`;
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
-    ctx.fillText(String(payouts[i]), b.x + b.w/2, b.y + b.h/2);
+    ctx.fillText(String(payouts[i]), cx, cy);
   }
 
   // balls (Solana glow)
@@ -368,6 +376,20 @@ function drawConfetti(now){
   else setTimeout(()=>{ const el = document.getElementById('confettiOverlay'); if (el) el.remove(); }, 600);
 }
 
+/* ------ Toast ------ */
+function showToast(text){
+  const el = document.createElement('div');
+  el.textContent = text;
+  Object.assign(el.style,{
+    position:'fixed', left:'50%', bottom:'90px', transform:'translateX(-50%)',
+    background:'rgba(0,0,0,0.8)', color:'#fff', fontWeight:'700',
+    padding:'10px 12px', borderRadius:'10px', zIndex:9999
+  });
+  document.body.appendChild(el);
+  requestAnimationFrame(()=>{ el.style.transition='opacity 600ms'; el.style.opacity='1'; });
+  setTimeout(()=>{ el.style.opacity='0'; setTimeout(()=>el.remove(), 650); }, 1400);
+}
+
 /* ------ Leaderboard (coins) ------ */
 function getInitials(n){ const p=(n||'').trim().split(/\s+/); return ((p[0]||'').charAt(0)+(p[1]||'').charAt(0)).toUpperCase()||'P'; }
 function renderLeaderboard(){
@@ -380,7 +402,7 @@ function renderLeaderboard(){
 
   arr.slice(0,20).forEach((p,i)=>{
     const row=document.createElement('div');
-    Object.assign(row.style,{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',padding:'8px 10px',borderRadius:'12px',background:'rgba(255,255,255,0.04)',marginBottom:'6px'});
+    Object.assign(row.style,{display:'flex',alignItems:'center',justifyContent:'space-between',gap:'10px',padding:'8px 10px',borderRadius:'12px',background:'rgba(255,255,255,0.04)'});
 
     const left=document.createElement('div'); Object.assign(left.style,{display:'flex',alignItems:'center',gap:'10px'});
     const rank=document.createElement('div'); rank.textContent=String(i+1); Object.assign(rank.style,{width:'28px',textAlign:'center',fontWeight:'800',color:i===0?'#14F195':'rgba(255,255,255,0.9)'});
@@ -402,7 +424,7 @@ function renderLeaderboard(){
   });
 }
 
-/* ------ Earn (referrals UI placeholders) ------ */
+/* ------ Earn (UI placeholders) ------ */
 function renderEarn(){
   if (!dom.invitedCount || !dom.earnFriendsList || !dom.inviteTopList) return;
 
@@ -505,6 +527,10 @@ function step(now){
 
       const finalIdx = idx; // physics-decided — no remap
       const reward = payouts[finalIdx] || 0;
+
+      // mark bin hit for animation
+      bins[finalIdx]._hitAt = performance.now();
+
       coins += reward;
       playLandSound(reward >= 50);
       if (reward === 100) startConfetti();
@@ -538,7 +564,7 @@ function spawnFloatingReward(x,y,text){
 
 /* ------ Gameplay (Nuke aware) ------ */
 function dropBall(){
-  if (balls <= 0){ showModal('<div style="font-weight:700">No balls left — wait for regen</div>'); return; }
+  if (balls <= 0){ showToast('No balls left — wait for regen'); return; }
   const W = canvas.clientWidth;
   const drops = isNuke() ? 10 : 1;
   const canDrop = Math.min(drops, balls);
@@ -582,10 +608,10 @@ function renderBoosts(){
   }
 }
 
-function buySpeedster(cost){ if (coins < cost) return; coins -= cost; boosts.speedsterUntil = Date.now() + 24*3600*1000; updateUI(); showModal('<div style="font-weight:800;font-size:16px">⚡️ Speedster activated for 24h!</div>'); }
-function buyMaxi(cost){ if (coins < cost) return; coins -= cost; boosts.maxiUntil = Date.now() + 24*3600*1000; if (balls > maxBalls()) balls = maxBalls(); updateUI(); showModal('<div style="font-weight:800;font-size:16px">☄️ Maxi activated: Max 500 for 24h!</div>'); }
-function buySpender(cost){ if (coins < cost) return; coins -= cost; balls = Math.min(maxBalls(), balls + 100); updateUI(); showModal('<div style="font-weight:800;font-size:16px">🪙 +100 balls added!</div>'); }
-function buyNuke(cost){ if (coins < cost) return; coins -= cost; boosts.nukeUntil = Date.now() + 24*3600*1000; updateUI(); showModal('<div style="font-weight:800;font-size:16px">💥 Nuke activated: 10 balls per tap for 24h!</div>'); }
+function buySpeedster(cost){ if (coins < cost) return; coins -= cost; boosts.speedsterUntil = Date.now() + 24*3600*1000; updateUI(); showToast('⚡️ Speedster 24h active'); }
+function buyMaxi(cost){ if (coins < cost) return; coins -= cost; boosts.maxiUntil = Date.now() + 24*3600*1000; if (balls > maxBalls()) balls = maxBalls(); updateUI(); showToast('☄️ Maxi 24h active'); }
+function buySpender(cost){ if (coins < cost) return; coins -= cost; balls = Math.min(maxBalls(), balls + 100); updateUI(); showToast('🪙 +100 balls'); }
+function buyNuke(cost){ if (coins < cost) return; coins -= cost; boosts.nukeUntil = Date.now() + 24*3600*1000; updateUI(); showToast('💥 Nuke 24h active'); }
 
 /* ------ Regen ------ */
 function startRegen(){
@@ -614,9 +640,22 @@ function startRegen(){
   }, regenSeconds() * 1000);
 }
 
-/* ------ Modal & Nav ------ */
-function showModal(html){ if (!dom.modal) return; dom.modalContent.innerHTML = html; dom.modal.classList.remove('hidden'); }
-function hideModal(){ dom.modal?.classList.add('hidden'); }
+/* ------ Modal fallback (non-blocking) & Nav ------ */
+function showModal(html){
+  let modal = document.getElementById('modal');
+  if (!modal){
+    const m = document.createElement('div');
+    m.id='modal';
+    m.style.position='fixed'; m.style.inset='0'; m.style.display='grid'; m.style.placeItems='center';
+    m.style.background='rgba(0,0,0,0.5)'; m.style.zIndex='10001';
+    const card = document.createElement('div'); card.style.background='rgba(18,18,26,0.9)'; card.style.border='1px solid rgba(255,255,255,0.12)'; card.style.borderRadius='16px'; card.style.padding='16px'; card.style.color='#fff';
+    card.innerHTML = html;
+    m.appendChild(card);
+    document.body.appendChild(m);
+    setTimeout(()=> m.remove(), 1400);
+  }
+}
+function hideModal(){ const m = document.getElementById('modal'); if (m) m.remove(); }
 
 function showScreen(k){
   document.querySelectorAll('.screen').forEach(s => s.classList.remove('active'));
@@ -631,14 +670,6 @@ function showScreen(k){
 }
 
 /* ------ Theme / Buttons ------ */
-function initTheme(){
-  Object.assign(document.body.style,{
-    background:'radial-gradient(1200px 700px at 80% -10%, rgba(20,241,149,0.12), rgba(0,0,0,0)),radial-gradient(900px 500px at 0% 120%, rgba(153,69,255,0.14), rgba(0,0,0,0)),linear-gradient(180deg, #0b0b12 0%, #05060a 100%)',
-    backgroundAttachment:'fixed',
-    color:'rgba(255,255,255,0.95)'
-  });
-  stylePrimary(dom.dropBtn);
-}
 function stylePrimary(btn){
   if (!btn) return;
   btn.style.background='linear-gradient(90deg,#9945FF,#0ABDE3)';
@@ -652,19 +683,31 @@ function stylePrimary(btn){
   btn.style.textShadow='0 0 2px #000, 0 0 2px #000';
 }
 
+/* ------ Buy Drops bottom sheet ------ */
+function openSheet(){ dom.buySheet?.classList.add('open'); }
+function closeSheet(){ dom.buySheet?.classList.remove('open'); }
+window.appBuyDrops = function(qty){
+  // Hook into Stars/checkout later; for now just demo
+  const cost = Math.ceil(qty / 2); // placeholder price logic
+  showToast(`Pretend purchased ${qty} drops for ${cost} SOLX`);
+  balls = Math.min(maxBalls(), balls + qty);
+  updateUI();
+  closeSheet();
+};
+
 /* ------ Events & Init ------ */
 dom.copyRef && dom.copyRef.addEventListener('click', async ()=>{
   if (!dom.refLink) return;
-  try{ await navigator.clipboard.writeText(dom.refLink.value); showModal('<div style="font-weight:700">Link copied ✅</div>'); }
-  catch(e){ showModal('<div style="font-weight:700">Copy failed — select manually</div>'); }
+  try{ await navigator.clipboard.writeText(dom.refLink.value); showToast('Link copied ✅'); }
+  catch(e){ showToast('Copy failed'); }
 });
-dom.closeModalBtn && dom.closeModalBtn.addEventListener('click', hideModal);
 document.getElementById('dropBtn')?.addEventListener('click', dropBall);
 document.querySelectorAll('.nav-btn').forEach(b => b.addEventListener('click', ()=> showScreen(b.dataset.target)));
+dom.buyDropsBtn && dom.buyDropsBtn.addEventListener('click', openSheet);
+dom.sheetClose  && dom.sheetClose.addEventListener('click', closeSheet);
 
 let loopStarted = false;
 function init(){
-  initTheme();
   fitCanvas();
   buildObstaclesAndBins();
   setReferralLink();
